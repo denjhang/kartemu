@@ -58,26 +58,16 @@ def overlay_number(comp_path, digit, src_tex_path):
         font = ImageFont.truetype('arial.ttf', 13)
     except OSError:
         font = ImageFont.load_default()
-    # 车头徽章圆圈: 模板 1.png 中环绕白标的亮色圆盘, 求其质心即为圆心
-    tpl = np.array(Image.open(os.path.join(os.path.dirname(src_tex_path), '1.png')))
+    # 白标即徽章圆心(最小二乘圆拟合实测: badge1 (48,98) r9.1, badge2 (151,98) r8.3),
+    # 数字 10x17 格以锚点为中心贴放, 字形在格内再居中
     for x0, y0 in zip(xs.tolist(), ys.tolist()):
-        win = 16
-        ysl, ysh = max(0, y0 - win), y0 + win
-        xsl, xsh = max(0, x0 - win), x0 + win
-        region = tpl[ysl:ysh, xsl:xsh]
-        lum = region[..., :3].astype(int).sum(axis=2)
-        mask = (lum > 500) & (region[..., 3] > 200)   # 亮色(白/浅灰)徽章像素
-        if mask.sum() < 10:
-            continue
-        ys2, xs2 = np.where(mask)
-        cx, cy = int(xs2.mean()) + xsl, int(ys2.mean()) + ysl
         cell = Image.new('RGBA', (10, 17))
         d2 = ImageDraw.Draw(cell)
         bbox = d2.textbbox((0, 0), str(digit), font=font)
         w, h = bbox[2] - bbox[0], bbox[3] - bbox[1]
         d2.text(((10 - w) / 2 - bbox[0], (17 - h) / 2 - bbox[1]), str(digit),
                 fill=(58, 174, 25, 255), font=font)
-        im.paste(cell, (cx - 5, cy - 8), cell)
+        im.paste(cell, (x0 - 5, y0 - 8), cell)
     im.save(comp_path)
     return True
 
