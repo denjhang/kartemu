@@ -107,17 +107,18 @@ Promise.all([
   // 上下浮动按官方 balloon_ani 节奏(1400ms, ±0.2);细绳连回锚点(视觉近似)。
   const t2 = new THREE.Vector3().setFromMatrixPosition(kids[4].matrix);
   const t3 = new THREE.Vector3().setFromMatrixPosition(kids[5].matrix);
-  const anchor = new THREE.Vector3((t2.x + t3.x) / 2, (t2.y + t3.y) / 2, (t2.z + t3.z) / 2);
+  window.__anchor = new THREE.Vector3((t2.x + t3.x) / 2, (t2.y + t3.y) / 2, (t2.z + t3.z) / 2);
+  // 悬浮圆气球: 挂在后上方(球底 z=1.8, 头顶+半头以上), y 越过车尾, 不遮车牌
   const balloonNode = new THREE.Group();
   balloonNode.name = 'balloon';
-  balloonNode.position.copy(anchor).add(new THREE.Vector3(0, 0.06, 1.03)); // 球底 z=1.03
+  balloonNode.position.set(0, 1.15, 1.8);
   rekart.add(balloonNode);
   balloonNode.add(innerRoot(bal));
-  const rope = new THREE.Mesh(
+  // 细绳: 从后轮锚点斜拉到气球底, 每帧随浮动更新
+  window.__rope = new THREE.Mesh(
     new THREE.CylinderGeometry(0.006, 0.006, 1, 6),
     new THREE.MeshBasicMaterial({ color: 0x111111 }));
-  rope.position.set(0, -0.03, -0.5 - anchor.z);
-  balloonNode.add(rope);
+  rekart.add(window.__rope);
   balloonT = 0;
   parts.balloon = balloonNode;
 
@@ -151,13 +152,18 @@ const clock = new THREE.Clock();
 renderer.setAnimationLoop(() => {
   const dt = clock.getDelta();
   if (mixer) mixer.update(dt);
-  if (balloonT !== null) {
+  if (balloonT !== null && parts.balloon) {
     balloonT += dt;
     const bob = 0.2 * Math.sin(balloonT * Math.PI * 2 / 1.4); // 官方 1400ms 节奏
-    if (parts.balloon) {
-      parts.balloon.position.z = 1.03 + bob;
-      parts.balloon.position.y = 0.557 + bob * 0.2;
-    }
+    parts.balloon.position.set(0, 1.15 + bob * 0.3, 1.8 + bob);
+    // 绳: 锚点 -> 气球底, 沿两点方向放置
+    const a = window.__anchor, b = parts.balloon.position;
+    const dir = new THREE.Vector3().subVectors(b, a);
+    const len = dir.length();
+    window.__rope.scale.set(1, len, 1);
+    window.__rope.position.copy(a).addScaledVector(dir, 0.5);
+    window.__rope.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0),
+      dir.normalize());
   }
   if (kartRoot) {
     mainAngle = (mainAngle + dt * (+speedEl.value)) % (Math.PI * 2);
