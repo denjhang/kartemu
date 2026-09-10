@@ -16,8 +16,12 @@ from PIL import Image
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import s1_parse as S
+import char_pose as CP
 
 TEX_ROOTS = [
+    'unpacked/character_dao',
+    'unpacked/character_common',
+    'unpacked/DataPack2_00007/kart_/cotton1',
     'unpacked/theme_village/texture',
     'unpacked/theme_xyy/texture',
     'unpacked/theme_common/texture',
@@ -251,6 +255,30 @@ def extract_jv(geo):
     return P, N, UV, I
 
 
+def extract_jv_baked(geo, skin):
+    """蒙皮网格按给定蒙皮矩阵烘焙顶点(官方 fm(): 双骨骼线性混合)"""
+    verts = geo['vertices']
+    wedges = geo['wedges']
+    P, N, UV, I = [], [], [], []
+    for tri in geo['triangles']:
+        start = len(P)
+        for k in range(3):
+            w = wedges[tri['wedge'][k]] if tri['wedge'][k] < len(wedges) else None
+            v = verts[tri['position'][k]]
+            sk = skin[v['bone0']] * v['weight0']
+            b1 = v['bone1']
+            if b1 < 255:
+                sk = sk + skin[b1] * (1 - v['weight0'])
+            p = sk @ np.array([v['position'][0], v['position'][1], v['position'][2], 1.0])
+            P.append(p[:3])
+            n = sk[:3, :3] @ np.array(v.get('normal') or (0, 1, 0))
+            ln = np.linalg.norm(n)
+            N.append(n / ln if ln > 1e-9 else (0, 1, 0))
+            UV.append((w['u'], w['v']) if w else (0, 0))
+        I.extend((start, start + 1, start + 2))
+    return P, N, UV, I
+
+
 def convert(src_path, out_dir, base, model_mode=False, character_mode=False):
     data = open(src_path, 'rb').read()
     root, g = S.parse_auto(data)
@@ -321,7 +349,34 @@ def convert(src_path, out_dir, base, model_mode=False, character_mode=False):
         for c in n.get('children', []):
             collect_mesh(unwrap(c), m, st)
 
-    if model_mode or v.get('className') == 'ReKart':
+    if character_mode:
+        # 人物: 按 §18 官方语义渲染 —— f45 骑乘姿态烘焙蒙皮 + 刚性件随骨骼
+        seq = CP.load_sequence('unpacked/character_common/f45.1s')
+        pose = CP.eval_pose(seq, 100)
+        body_geo = unwrap(unwrap(v['children'][0])['geometry'])
+        world, skin = CP.skin_matrices(body_geo['bones'], pose)
+        # 官方 Bw(): 刚性附件 -> 骨骼 (face/head→bone5, handL→bone9, handR→bone14)
+        BONE_OF_CHILD = {1: 5, 2: 5, 3: 5, 4: 9, 5: 14}
+
+        def walk_char(n, m, top_idx):
+            n = unwrap(n)
+            m = m @ node_matrix(n)
+            if n.get('geometry'):
+                geo = unwrap(n['geometry'])
+                if 'vertices' in geo:  # body 蒙皮烘焙
+                    P, N, UV, I = extract_jv_baked(geo, skin)
+                    key = '0_body'
+                else:
+                    P, N, UV, I = extract_kv(geo)[:4]
+                    bone = BONE_OF_CHILD.get(top_idx)
+                    m = world[bone] @ m if bone is not None else m
+                    key = 'f00' if top_idx == 1 else '0'  # 脸用中性脸贴图
+                groups.setdefault(key, []).append(
+                    (m, P, N, UV, I, n.get('name'), None, 1, None, None))
+            for i, c in enumerate(n.get('children') or []):
+                walk_char(c, m, i if top_idx == 0 else top_idx)
+        walk_char(v, np.eye(4), 0)
+    elif model_mode or v.get('className') == 'ReKart':
         # 模型模式:根是 sn 节点
         def walk_model(n, parent_m):
             n = unwrap(n)
@@ -434,8 +489,13 @@ def convert(src_path, out_dir, base, model_mode=False, character_mode=False):
         B.gltf_nodes.append(node)
         scene_nodes.append(len(B.gltf_nodes) - 1)
 
-    root_node = {'rotation': [-0.7071067811865476, 0.0, 0.0, 0.7071067811865476],
-                 'children': scene_nodes, 'name': 'zup_root'}
+    # 官方约定: 赛道/车辆数据 Z-up → 呈现 Y-up 需根 Rx(-90°);
+    # 人物 model.1s 本身就是 Y-up(convertClientCoordinates:false), 不加旋转!
+    if character_mode:
+        root_node = {'children': scene_nodes, 'name': 'model_root'}
+    else:
+        root_node = {'rotation': [-0.7071067811865476, 0.0, 0.0, 0.7071067811865476],
+                     'children': scene_nodes, 'name': 'zup_root'}
     B.gltf_nodes.append(root_node)
     root_idx = len(B.gltf_nodes) - 1
     gltf = {

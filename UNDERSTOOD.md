@@ -326,3 +326,13 @@ Z -0.22~+1.50(坐姿腿前伸 1.72)——标准 Y-up 直立坐姿, 全链公式�
    需复刻该合成或先用整片 dye 色近似(当前做法)。
 4. 脸部: fXX.png + overlay 合成(sC), 状态由 rootChannel IntTontroller 驱动。
 5. 动画循环(可选): 逐帧求值 f45 的 334ms 循环即可获得驾驶摆动。
+
+## 19. 人物渲染落地(2026-09-10)
+
+按 §18 清单实施完成:
+- `char_pose.py`: CharSequence 采样/骨骼链/蒙皮矩阵求值模块(§18 公式的可复用实现)。
+- 导出器 `--character`: body 蒙皮顶点按 f45 骑乘姿态烘焙(extract_jv_baked),
+  刚性件(face→bone5, handL/R→bone9/14)按 world 矩阵烘焙, 脸部用 f00.png。
+- 实测(游戏内侧视图): 皮蛋以官方骑乘姿态(前倾握把)坐在板车挂点上, 比例正确。
+- 遗留: 广告牌背面渲染为实心橙(cull 方向/alpha 待查); 人物动画循环(可选);
+  官方 body 贴图合成(Fw/Dw primaryColor/highColor, 当前用 dye6 蓝近似)。
