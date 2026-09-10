@@ -173,3 +173,18 @@
   Box3/Quaternion/Matrix3/MD5/DXT 常量等),记录于 rename_pass.py 的 ALIAS 表。
 - 动态懒加载 chunk:`LocalTimeAttackParameters-CnGQYfTA.js`(kartspec 参数运行时),
   未深挖,后续按需。
+
+## 13. reference/ 参考项目盘点(用户 2026-09-10 提供, 不入库)
+
+| 项目 | 内容 | 对本项目价值 |
+|---|---|---|
+| kartrider_model_1s_to_obj | 他人写的 model.1s→OBJ(Python, 直接解 Object47 字节流) | ⭐⭐⭐ 独立实现交叉验证我们的 s1_parse;其 `v=1.0-v` 是为 OBJ(左下原点)翻转,反证 **.1s UV 是 D3D 左上原点** → glTF 同为左上原点,官方 flipY=false 直传 v,我们去掉 1-v 翻转的修正得到旁证 |
+| KartSpec-main | 内存抓取的 kartspec **参数 schema**(92 项带类型)+ 包加密常量 | ⭐⭐⭐ 与我们 kartspec.csv 前 74 列逐名核对一致(mass=100 等),列名权威化;多出的 18 项是新版参数 |
+| KartRider-P236 / P5136 | 韩服官方客户端协议(5136)的 C# 测试服务端(登录/房间/道具/背包) | ⭐⭐ 对"脱离官方客户端"的 H5 克隆不直接可用;若将来做协议兼容/道具系统参考 |
+| Launcher_GF/HF/TF/V2 | 各区服启动器源码(AFL), PIN/BML/网络会话 | ⭐ 同上,协议侧 |
+| GoKart-master | 古老 C# 服务端模拟器 | ⭐ 历史参考 |
+| KartRiderDemoEditor | 录像(demo)编辑器 | ⭐⭐ 将来做幽灵/录像回放时参考其格式 |
+| kart-patcher | 跨区客户端补丁/安装器 | ⭐ 不需要 |
+| kartrider.api.net / open-api-docs / game-analysis | Nexon API(战绩查询)与其数据分析 | ⭐ 与离线克隆无关 |
+
+结论:model_1s_to_obj 与 KartSpec 立即有用(已用于交叉验证);协议类项目留作道具/多人系统阶段的参考。
