@@ -228,3 +228,60 @@
 - 官方姿态积分 `integrateStandardOrientation` = Kp(位置积分) + P$(按 angularVelocity
   旋转 body.forward/up/right 正交基);转向力矩符号由漂移/抓地力积分(@1236900 一带)
   经 frontGrip/rearGrip 决定,克隆阶段以屏幕方向校准等价实现。
+
+## 17. 车辆/人物模型系统完整语义(2026-09-10 深挖)
+
+### 17.1 三种内容,三种空间约定(关键!)
+| 内容 | 数据空间 | 根旋转 | 依据 |
+|---|---|---|---|
+| 赛道 track.1s | Z-up | `rotation.x=-π/2`(convertClientCoordinates 默认开, @6397) | track root |
+| 车辆 model.1s | **Z-up, 前方=-Y** | `rotation.x=-π/2`(importVehicle1s @2630) | cotton1 rootBounds y=±0.85(前后) z=0~0.81(高); handle z=0.57 高处 y=-0.38 前方; 轮 z≈0.14 贴地 |
+| 人物 model.1s | **Y-up, 前方=+Z** | **无**(convertClientCoordinates:false, @13286) | dao z=-0.39~1.83(坐姿腿前伸深度), y=-0.77~0.66(身高) |
+⇒ 我们的导出器:**车辆保留根 Rx(-90°);人物必须去掉根旋转**(当前 Bug 根源)。
+u1=Rx(+90°) 仅用于 toon 描边 pass 的矩阵换算,不是场景根变换。
+
+### 17.2 车辆层级与挂点(cotton1 实测)
+```
+ReKart root (children[6] = 人物挂点, t=(0,-0.067,0.349))
+├─0 seat (ReToonRigid)
+├─1 handle  t=(0,-0.379,0.566)
+├─2 wheel0  t=( 0.460,-0.435,0.144)  ← 前轮(转向轮)
+├─3 wheel1  t=(-0.460,-0.435,0.144)  ← 前轮
+├─4 wheel2  t=( 0.434, 0.497,0.171)  ← 后轮
+├─5 wheel3  t=(-0.434, 0.497,0.171)  ← 后轮
+├─6 (空名)  t=(0,-0.067,0.349)       ← 人物挂点(官方 add 人物 object 到此)
+└─7 port0   t=(0.198,0.822,0.231)
+```
+- 官方挂载代码: `renderScene.bySource.get(root.children[6]).add(character.object)`(@29570 附近)。
+- iparam.xml 的 `attachments[]`(名字→节点映射)用于道具: slot2/3=尾灯, slot16=气球。
+- 人物缩放 = param XML `OnCharacterSize` 属性,缺省 1(cotton1 无 → 1.0)。
+- 车辆资产清单: model.1s + f00~f03.1s(4 个 KartSequence 动画)+ param/iparam.xml +
+  0.png/1.png + shadow.png。**cotton1 没有 f0X 动画、没有 model.jfp**(最老车,无动画),
+  车轮转动/转向由运行时 wheelPresentation(t1 类)直接旋转 wheel 节点。
+
+### 17.3 车辆世界摆放(O$ 类 'player-kart')
+```
+root.position = physics.state  (呈现空间坐标)
+root.quaternion = setFromRotationMatrix(makeBasis(right, up, forward))  ← 列
+modelMount.scale = visualScale (压扁/拉伸特效)
+```
+即把物理 body 正交基直接作为局部→世界旋转, 局部 +Z=前方、+Y=上方。
+
+### 17.4 人物链路
+- 资产: model.1s + body 贴图(0.png=调色板占位, 加载时 Fw/Dw 与 primaryColor/highColor
+  合成最终贴图!)+ face 贴图 fXX.png(+overlay) + 动画 **character_common.rho** 的 fXX.1s
+  (特殊人物可用 motionFolder 覆盖)。
+- 状态→动作映射(v1 类): 0:f00, 8:f45, 9:f46, 10:f47, 11:f48, 12:f49, 13:f50,
+  14:f51, 18:f11, 19:f54(linked 另有 f54 门控)。
+- 每帧: 动画集求值 → 24 骨骼矩阵数组 → ① 蒙皮 body(ReToonSkinned) ② 次级蒙皮节点
+  ③ 刚性附件复制骨骼矩阵: face→bone5(×2)、head→bone5、handL→bone9、handR→bone14
+  (matrix = boneMatrix × (localMatrix 存在时))。
+- 人物颜色: 玩家配色 slot2(车身色)/slot70(人物色) → Un(x, id, 0x46) → dye base/high。
+
+### 17.5 克隆待办(按此清单执行)
+1. 导出器: 人物模式去掉根旋转(车辆保留)。
+2. 人物挂到 kart child[6] 位置(呈现系 (0,0.349,0.067)), scale=1。
+3. 骑乘姿态: 解析 character_common.rho 的 f00/f45 CharSequence, 求值到 24 骨骼,
+   用骨骼矩阵驱动蒙皮(或先静态取 f45 骑乘帧的姿态矩阵烘焙)。
+4. 车轮: 前轮(wheel0/1)按转向角转 Y, 四轮按行驶距离转 X(转速/半径)。
+5. 身体贴图合成(可选): 按 Dw 算法用 primaryColor/highColor 上色 0.png。
