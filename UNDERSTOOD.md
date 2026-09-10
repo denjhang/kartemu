@@ -210,3 +210,12 @@
 
 效果:城镇高速公路起点段渲染与官方观感一致(树叶镂空/路灯/旗帜/广告牌/警示墩/远桥),
 赛车与人物上车可见;人物体色待调色板机制(characterColorIds)落地。
+
+## 15. 人物调色板落地(2026-09-10)
+
+- 官方机制(deob_named.js Jl 类):`etc_/itemTable.kml`(UTF-16 XML,位于 DataPack1)定义
+  `<character name='dao' orgColorId='6'/>` → `<dye id='6' base='255 19 121 219' high='255 0 252 255' .../>`
+  (A R G B 字节序)。渲染时 body 材质乘 primary/high 颜色 uniform。
+- 导出器 `--character` 模式:节点名 body 的网格单独成组(`0_body`),
+  材质 = 0.png × baseColorFactor(19,121,219);脸/手等其余节点保持原色。
+- 实测:皮蛋上车,官方蓝。后续可扩展 dye 高光双色与 uniform 换装。

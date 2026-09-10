@@ -46,3 +46,6 @@ need.txt
 
 # ---- 参考项目(用户提供的第三方 zip, 不入库) ----
 reference/
+
+# 临时测试产物
+web/_tmp/

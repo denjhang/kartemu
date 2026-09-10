@@ -113,14 +113,16 @@ class GltfBuilder:
         self.gltf_textures.append({'source': img_idx})
         return tex_idx
 
-    def get_material(self, tex_name, out_dir, base, cull=2, alpha=None, mtl=None):
+    def get_material(self, tex_name, out_dir, base, cull=2, alpha=None, mtl=None, force_color=None):
         key = tex_name or '__default__'
         if key in self.material_idx:
             return self.material_idx[key]
         # 官方 Wb(): D3D cull 1=NONE(双面) 2=CW(正面) 3=CCW(背面); 默认 2
         side_map = {1: 'DOUBLE', 2: 'SINGLE', 3: 'BACK'}
         mat = {'name': key, 'doubleSided': side_map.get(cull if cull in side_map else 2, 'SINGLE') != 'SINGLE'}
-        t = self.get_texture(tex_name, out_dir, base)
+        # '0_body' 等 tint 变体仍使用原贴图
+        tex_lookup = tex_name.replace('_body', '')
+        t = self.get_texture(tex_lookup, out_dir, base)
         # 官方语义: 只有 AlphaProperty.alphaTestEnable 才做 alphaTest,
         # 贴图 alpha 通道不一定是透明度(可能是涂装/遮罩), 不可凭通道猜测
         if alpha and alpha.get('alphaTestEnable'):
@@ -135,6 +137,8 @@ class GltfBuilder:
             d = mtl.get('diffuse', 0xFFFFFFFF)
             pbr['baseColorFactor'] = [((d >> 16) & 255) / 255.0, ((d >> 8) & 255) / 255.0,
                                       (d & 255) / 255.0, ((d >> 24) & 255) / 255.0]
+        if force_color is not None:
+            pbr['baseColorFactor'] = force_color
         if t is not None:
             pbr['baseColorTexture'] = {'index': t}
         else:
@@ -247,7 +251,7 @@ def extract_jv(geo):
     return P, N, UV, I
 
 
-def convert(src_path, out_dir, base, model_mode=False):
+def convert(src_path, out_dir, base, model_mode=False, character_mode=False):
     data = open(src_path, 'rb').read()
     root, g = S.parse_auto(data)
     v = unwrap(root)
@@ -330,6 +334,9 @@ def convert(src_path, out_dir, base, model_mode=False):
                     P, N, UV, I = extract_kv(geo)[:4]
                 # 车辆/人物模型只有一套贴图(0.png),官方 y1() 直接整体赋 baseColor map
                 key = '0' if find_texture('0') else '__default__'
+                # 人物 body 走 itemTable 调色板(皮蛋 dye6 base=19,121,219), 其余(脸/手)原色
+                if character_mode and (n.get('name') or '').lower() == 'body':
+                    key = '0_body'
                 groups.setdefault(key, []).append(
                     (m, P, N, UV, I, n.get('name'), None, 1, None, None))
             for c in n.get('children') or []:
@@ -360,8 +367,11 @@ def convert(src_path, out_dir, base, model_mode=False):
     scene_nodes = []
     for key, items in groups.items():
         first = items[0]
+        force = None
+        if model_mode and key == '0_body':
+            force = [19 / 255, 121 / 255, 219 / 255, 1.0]  # itemTable dye6 base(皮蛋蓝)
         mat_idx = B.get_material(None if key == '__default__' else key, out_dir, base,
-                                 cull=first[7], alpha=first[8], mtl=first[9])
+                                 cull=first[7], alpha=first[8], mtl=first[9], force_color=force)
         pos_arr = []
         nrm_arr = []
         uv_arr = []
@@ -457,4 +467,5 @@ def convert(src_path, out_dir, base, model_mode=False):
 
 if __name__ == '__main__':
     src, out, base = sys.argv[1], sys.argv[2], sys.argv[3]
-    convert(src, out, base, model_mode='--model' in sys.argv)
+    convert(src, out, base, model_mode='--model' in sys.argv,
+            character_mode='--character' in sys.argv)
