@@ -89,3 +89,11 @@
   web/track|kart|character),reflog expire + gc 后仓库 352KB。
   **教训:任何官方资产在 add 前必须先查 .gitignore 是否覆盖**。
 - 本地静态服务:`python server.py` → http://127.0.0.1:8088(/web/ 前缀映射项目 web/)。
+
+## 交付检查流程(硬性, 2026-09-10 两次白屏事故后)
+
+页面类改动完成后必须依次通过, 缺一不可:
+1. `node --input-type=module --check`(语法);
+2. 浏览器打开后 evaluate 冒烟: `__scene/info 文本/canvas 数量` 正常;
+3. 模拟一次真实交互(按键/点击)再截图确认渲染循环没死。
+常见根因: 动画循环引用了 .then 回调内块级作用域变量(加载完成前每帧 ReferenceError)。
