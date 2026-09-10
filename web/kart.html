@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>赛车单独渲染 - 板车(层级 + 官方轮子/转向语义)</title>
+<style>
+  html, body { margin: 0; overflow: hidden; background: #202530; }
+  #ui { position: fixed; left: 12px; top: 12px; color: #fff; font: 13px/1.7 monospace;
+        text-shadow: 0 1px 2px #000; user-select: none; }
+  input { vertical-align: middle; }
+</style>
+<script type="importmap">
+{ "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.178.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.178.0/examples/jsm/"
+} }
+</script>
+</head>
+<body>
+<div id="ui">
+  <div id="info">加载中…</div>
+  <div>转向 <input id="steer" type="range" min="-1" max="1" step="0.01" value="0">
+       <span id="steerV">0.00</span></div>
+  <div>车速 <input id="speed" type="range" min="0" max="30" step="0.5" value="8">
+       (驱动轮子自转)</div>
+  <div>人物 <input id="rider" type="checkbox" checked>(官方挂点 child[6], f45 骑乘)</div>
+</div>
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setSize(innerWidth, innerHeight);
+renderer.setPixelRatio(devicePixelRatio);
+document.body.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x202530);
+const camera = new THREE.PerspectiveCamera(40, innerWidth / innerHeight, 0.05, 100);
+const controls = new OrbitControls(camera, renderer.domElement);
+window.__cam = camera; window.__controls = controls;
+
+scene.add(new THREE.HemisphereLight(0xffffff, 0x445566, 2.0));
+const grid = new THREE.GridHelper(8, 32, 0x556, 0x334);
+scene.add(grid);
+
+// 官方 §22 轮子语义(数据空间):
+//   hd(a) = RotX(a)(自转)   i1(a) = RotZ(a)(转向)
+//   前轮 basis = i1(-steer*-3) · hd(mainAngle); Ra(handle, 同转向)
+//   轮子平移 z = wheelCompression(0)
+const rotX = a => new THREE.Matrix4().makeRotationX(a);
+const rotZ = a => new THREE.Matrix4().makeRotationZ(a);
+
+let kartRoot = null, handleChild = null, wheelChildren = [], mainAngle = 0;
+let mixer = null, riderNode = null, riderOn = true;
+
+Promise.all([
+  new GLTFLoader().loadAsync('kart/kart.gltf'),
+  new GLTFLoader().loadAsync('character/dao.gltf'),
+]).then(([kart, dao]) => {
+  scene.add(kart.scene);
+  kartRoot = kart.scene;
+  kart.scene.traverse(o => { if (o.isMesh) o.frustumCulled = false; });
+
+  // 定位官方语义节点: ReKart 根(zup_root 下), children[1]=handle, [2..5]=wheel0..3
+  const rekart = kart.scene.getObjectByName('ReKart');
+  const kids = rekart.children;
+  handleChild = kids[1].children[0];
+  wheelChildren = [2, 3, 4, 5].map(i => kids[i].children[0]);
+
+  // 人物挂 child[6](数据空间, 不带 zup_root 旋转 —— 父级已完成转换)
+  const charRoot = dao.scene.getObjectByName('char_root');
+  rekart.children[6].add(charRoot);
+  riderNode = charRoot;
+  mixer = new THREE.AnimationMixer(charRoot);
+  const f45 = dao.animations.find(a => a.name === 'f45');
+  if (f45) mixer.clipAction(f45).play();
+
+  const box = new THREE.Box3().setFromObject(kart.scene);
+  const ctr = box.getCenter(new THREE.Vector3());
+  controls.target.copy(ctr);
+  camera.position.set(ctr.x + 2.2, ctr.y + 1.5, ctr.z + 3.2);
+  controls.update();
+  document.getElementById('info').textContent =
+    `板车加载成功 · 节点 ${kart.scene.children.length}+ · 人物已挂官方挂点`;
+}).catch(e => {
+  document.getElementById('info').textContent = '加载失败: ' + e.message;
+  console.error(e);
+});
+
+const steerEl = document.getElementById('steer');
+const speedEl = document.getElementById('speed');
+const riderEl = document.getElementById('rider');
+steerEl.oninput = () => document.getElementById('steerV').textContent =
+  (+steerEl.value).toFixed(2);
+riderEl.onchange = () => { riderOn = riderEl.checked; if (riderNode) riderNode.visible = riderOn; };
+
+// 记录轮子初始局部矩阵(官方 ca 结果), 运行时只替换旋转分量
+const baseMats = new Map();
+const clock = new THREE.Clock();
+renderer.setAnimationLoop(() => {
+  const dt = clock.getDelta();
+  if (mixer) mixer.update(dt);
+  if (kartRoot) {
+    // 官方 advanceAngles: mainAngle += dt * 车速(视觉近似, 常数因子)
+    mainAngle = (mainAngle + dt * (+speedEl.value)) % (Math.PI * 2);
+    // 官方: steerVisual = steering * -3; 转动矩阵 = i1(-steerVisual)
+    const steerRot = rotZ((+steerEl.value) * 3);
+    if (handleChild) {
+      if (!baseMats.has(handleChild)) baseMats.set(handleChild, handleChild.matrix.clone());
+      handleChild.matrix.copy(steerRot).multiply(baseMats.get(handleChild));
+      handleChild.matrixAutoUpdate = false;
+      handleChild.matrixWorldNeedsUpdate = true;
+    }
+    wheelChildren.forEach((w, i) => {
+      if (!w) return;
+      if (!baseMats.has(w)) baseMats.set(w, w.matrix.clone());
+      const spin = rotX(mainAngle);
+      const rot = (i < 2) ? steerRot.clone().multiply(spin) : spin; // 前轮: 转向∘自转
+      w.matrix.copy(rot).multiply(baseMats.get(w));
+      w.matrixAutoUpdate = false;
+      w.matrixWorldNeedsUpdate = true;
+    });
+  }
+  controls.update();
+  renderer.render(scene, camera);
+});
+
+addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+});
+</script>
+</body>
+</html>

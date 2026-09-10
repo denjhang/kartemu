@@ -434,3 +434,34 @@ Z -0.22~+1.50(坐姿腿前伸 1.72)——标准 Y-up 直立坐姿, 全链公式�
 - 修复: 索引改为 `len(self.gltf_textures)`(数组真实长度)。
 - 脸贴图说明: dao 的 f00.png 是橙底脸(橙=皮肤), 官方 nC 优先找 f00_0
   (带遮罩变体, 本地未解出), plain f00.png 即官方兜底路径, 用法正确。
+
+## 22. 赛车层级化渲染与轮子演示(2026-09-10)
+
+### 22.1 官方装配(sl/ca, deob_named.js L943-998)
+- `sl()` 递归建树: 每节点一个 three Group, `ca()/ab()` 设置局部矩阵
+  (basis 行 × scale 列 + 平移, 与 setNodeMatrixUC 相同语义), 层级完整保留。
+- 几何: ReToonRigid→sb()(逐面展开 position/normal/uv), ReTriList→ob()。
+- 赛车贴图: **无 Fw/Dw 合成**(那是人物 body/high 专用), 直接用模型目录 0.png;
+  alpha 通道是涂装遮罩, 无 AlphaProperty.alphaTestEnable 时渲染不透明。
+- cotton1 层级(实测与 §17.2 一致): seat/handle(0,-0.379,0.566)/
+  wheel0(0.46,-0.435,0.144)/wheel1(-0.46,·)/wheel2(0.434,0.497,0.171)/wheel3/
+  child[6] 人物挂点(0,-0.067,0.349)/port0; 车体 bbox X±0.81 Y±0.91 Z0..0.81。
+
+### 22.2 轮子/转向演示(wheelPresentation, L2196-2242)
+- 绑定: mainWheels = children[2..5].child[0](ReToonRigid); handle = children[1].child[0]。
+- 每帧 update(state, timeMs):
+  - `steerVisual = steering × -3`; 转向矩阵 = `i1(-steerVisual)` = RotZ(steering×3);
+    `Ra(handle, 转向矩阵)` = 替换 handle basis。
+  - 自转 `mainAngle += dt × |v|(水平速度)`(advanceAngles, 注意负向回绕);
+    `hd(a)` = RotX(a)。
+  - 前轮(i<2) basis = `r1(转向, RotX(mainAngle))`(转向∘自转), 后轮 = RotX(mainAngle)。
+  - 轮子平移 = 自身 translation + [0,0,wheelCompression](悬挂压缩, 默认 0)。
+  - 外接轮(extWheels attachments[8/9])与外接转向([10/11])同理。
+- `ca(obj, transform, translation, basis, scale)`: 官方组合 = 平移/缩放来自源
+  transform, **basis 整体替换**。
+
+### 22.3 实现(tools/kart_gltf.py + web/kart.html)
+- kart_gltf.py: 层级化 glTF(每节点 local matrix, 6 网格), 0.png 转 RGB 不透明,
+  根 zup_root RotX(-90°)。
+- kart.html: 转向滑杆×车速驱动轮子(官方矩阵语义: 前轮 steer∘spin, handle 只 steer),
+  人物(char_root, 不带 zup 旋转)挂 ReKart children[6], f45 骑乘循环动画。
