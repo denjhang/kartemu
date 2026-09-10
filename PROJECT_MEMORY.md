@@ -68,5 +68,5 @@
 3. 碰撞重做(官方 Z$ 4m 均匀网格 rayQuery + 墙障碍)。
 4. 可选:官方 body 贴图合成(Fw/Dw,§20.6 已完整逆向算法);车辆轮子动画。
 5. 把 index.html 的骑乘人物换成新的骨骼蒙皮版(挂到赛车子树时去掉 zup_root 旋转)。
-6. [已完成] KartRider-Tools v1.2.2 解包(PyInstaller+Py3.13, reference/kt_extract + kt_pyz +
+6. [已完成] KartRider-Tools v1.2.2 解包(产物全在 reference/, 已被 .gitignore 覆盖: exe/kt_extract/kt_pyz/dump)(PyInstaller+Py3.13, reference/kt_extract + kt_pyz +
    kt_karttools_dump.txt):karttools.* 解析器与本项目逆向一致(§21),rho 解密在外部 RhoLoader.exe。

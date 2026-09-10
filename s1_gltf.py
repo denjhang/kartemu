@@ -111,9 +111,9 @@ class GltfBuilder:
         # 简化:外部文件引用
         img_idx = len(self.images)
         self.images.append({'uri': base + '_textures/' + fname})
-        tex_idx = len(self.textures)
+        # 索引必须取 gltf_textures 数组长度(字典可能与管理外的追加失步)
+        tex_idx = len(self.gltf_textures)
         self.textures[name] = tex_idx
-        self.textures = {**self.textures}  # 保持顺序无所谓
         self.gltf_textures.append({'source': img_idx})
         return tex_idx
 
