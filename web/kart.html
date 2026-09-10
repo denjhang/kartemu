@@ -31,7 +31,8 @@
     <label>人物动作 <select id="anim-sel">
       <option value="auto" selected>自动(随驾驶状态)</option>
       <option value="f00">f00 正常(待机)</option>
-      <option value="f46">f46 驾驶</option>
+      <option value="f40">f40 直行驾驶</option>
+      <option value="f46">f46 骑乘动作</option>
       <option value="f40">f40 漂移</option>
       <option value="f41">f41 左转摇头</option>
       <option value="f42">f42 右转摇头</option>
@@ -168,7 +169,7 @@ Promise.all([
   camera.position.set(ctr.x + 2.4, ctr.y + 1.6, ctr.z + 3.4);
   controls.update();
   document.getElementById('info').textContent =
-    '完全体就绪: 板车(绿漆+号牌) + 皮蛋(f46) + 头戴摄像机 + 风镜 + 气球';
+    '完全体就绪: 板车(绿漆+号牌) + 皮蛋(自动状态机) + 头戴摄像机 + 风镜 + 气球';
 }).catch(e => {
   document.getElementById('info').textContent = '加载失败: ' + e.message;
   console.error(e);
@@ -236,7 +237,7 @@ renderer.setAnimationLoop(() => {
     else if (drive.speed < -0.3) st = 'f50';                   // 倒车: 扭头看后
     else if (drive.steer > 0.3) st = 'f41';                    // 左转摇头
     else if (drive.steer < -0.3) st = 'f42';                   // 右转摇头
-    else st = 'f46';                                           // 直行驾驶
+    else st = 'f40';                                           // 直行驾驶(官方 fd(): 头部稳定的骑乘循环)
     window.__setCharAnim && window.__setCharAnim(st, true);
   }
   // 火焰随喷火
