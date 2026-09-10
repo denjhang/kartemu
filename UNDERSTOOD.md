@@ -219,3 +219,12 @@
 - 导出器 `--character` 模式:节点名 body 的网格单独成组(`0_body`),
   材质 = 0.png × baseColorFactor(19,121,219);脸/手等其余节点保持原色。
 - 实测:皮蛋上车,官方蓝。后续可扩展 dye 高光双色与 uniform 换装。
+
+## 16. 转向符号校准(2026-09-10)
+
+- three.js 右手系 +Y-up 中,+yaw 使 +Z 转向 +X,而对沿 +Z 前进的相机而言 +X 在屏幕**左侧**
+  ⇒ 原型 `steer=(right-left)*max` 导致左右颠倒(用户实测反馈吻合)。
+- 修正为 `steer=(left-right)*max`。页面内模拟按键实测:按 D 1.2s 横向位移 +2.2m(屏幕右),判定通过。
+- 官方姿态积分 `integrateStandardOrientation` = Kp(位置积分) + P$(按 angularVelocity
+  旋转 body.forward/up/right 正交基);转向力矩符号由漂移/抓地力积分(@1236900 一带)
+  经 frontGrip/rearGrip 决定,克隆阶段以屏幕方向校准等价实现。

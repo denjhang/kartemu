@@ -139,8 +139,8 @@ function step(dt) {
   const left = (keys.KeyA || keys.ArrowLeft) ? 1 : 0;
   const right = (keys.KeyD || keys.ArrowRight) ? 1 : 0;
 
-  // 转向(带回正)
-  const target = (right - left) * K.steerMax;
+  // 转向(带回正)。three.js 右手系中 +yaw 朝屏幕左转, 故右键减 yaw
+  const target = (left - right) * K.steerMax;
   car.steer += (target - car.steer) * Math.min(1, dt * 8);
 
   fwd.set(Math.sin(car.yaw), 0, Math.cos(car.yaw));
