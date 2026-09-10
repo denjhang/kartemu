@@ -2,7 +2,7 @@
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
-<title>赛车单独渲染 - 板车(层级 + 官方轮子/转向语义)</title>
+<title>赛车单独渲染 - 板车(层级 + 官方轮子/转向/贴图合成)</title>
 <style>
   html, body { margin: 0; overflow: hidden; background: #202530; }
   #ui { position: fixed; left: 12px; top: 12px; color: #fff; font: 13px/1.7 monospace;
@@ -23,7 +23,6 @@
        <span id="steerV">0.00</span></div>
   <div>车速 <input id="speed" type="range" min="0" max="30" step="0.5" value="8">
        (驱动轮子自转)</div>
-  <div>人物 <input id="rider" type="checkbox" checked>(官方挂点 child[6], f45 骑乘)</div>
 </div>
 <script type="module">
 import * as THREE from 'three';
@@ -53,12 +52,9 @@ const rotX = a => new THREE.Matrix4().makeRotationX(a);
 const rotZ = a => new THREE.Matrix4().makeRotationZ(a);
 
 let kartRoot = null, handleChild = null, wheelChildren = [], mainAngle = 0;
-let mixer = null, riderNode = null, riderOn = true;
+let mixer = null, riderNode = null;
 
-Promise.all([
-  new GLTFLoader().loadAsync('kart/kart.gltf'),
-  new GLTFLoader().loadAsync('character/dao.gltf'),
-]).then(([kart, dao]) => {
+new GLTFLoader().loadAsync('kart/kart.gltf').then((kart) => {
   scene.add(kart.scene);
   kartRoot = kart.scene;
   kart.scene.traverse(o => { if (o.isMesh) o.frustumCulled = false; });
@@ -69,21 +65,13 @@ Promise.all([
   handleChild = kids[1].children[0];
   wheelChildren = [2, 3, 4, 5].map(i => kids[i].children[0]);
 
-  // 人物挂 child[6](数据空间, 不带 zup_root 旋转 —— 父级已完成转换)
-  const charRoot = dao.scene.getObjectByName('char_root');
-  rekart.children[6].add(charRoot);
-  riderNode = charRoot;
-  mixer = new THREE.AnimationMixer(charRoot);
-  const f45 = dao.animations.find(a => a.name === 'f45');
-  if (f45) mixer.clipAction(f45).play();
-
   const box = new THREE.Box3().setFromObject(kart.scene);
   const ctr = box.getCenter(new THREE.Vector3());
   controls.target.copy(ctr);
   camera.position.set(ctr.x + 2.2, ctr.y + 1.5, ctr.z + 3.2);
   controls.update();
   document.getElementById('info').textContent =
-    `板车加载成功 · 节点 ${kart.scene.children.length}+ · 人物已挂官方挂点`;
+    `板车加载成功 · 官方贴图合成(绿涂装) · 轮子自转/转向就绪`;
 }).catch(e => {
   document.getElementById('info').textContent = '加载失败: ' + e.message;
   console.error(e);
@@ -91,10 +79,8 @@ Promise.all([
 
 const steerEl = document.getElementById('steer');
 const speedEl = document.getElementById('speed');
-const riderEl = document.getElementById('rider');
 steerEl.oninput = () => document.getElementById('steerV').textContent =
   (+steerEl.value).toFixed(2);
-riderEl.onchange = () => { riderOn = riderEl.checked; if (riderNode) riderNode.visible = riderOn; };
 
 // 记录轮子初始局部矩阵(官方 ca 结果), 运行时只替换旋转分量
 const baseMats = new Map();

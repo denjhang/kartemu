@@ -465,3 +465,17 @@ Z -0.22~+1.50(坐姿腿前伸 1.72)——标准 Y-up 直立坐姿, 全链公式�
   根 zup_root RotX(-90°)。
 - kart.html: 转向滑杆×车速驱动轮子(官方矩阵语义: 前轮 steer∘spin, handle 只 steer),
   人物(char_root, 不带 zup 旋转)挂 ReKart children[6], f45 骑乘循环动画。
+
+### 22.4 赛车贴图合成(tu/CC/Dw, L13860-13964)——修正 22.1
+- 赛车贴图**同样有加载期合成**(之前"无合成"结论错误):
+  `tu(archive, modelDir, t1Name, plateItemId, primary, high)`:
+  - t1Name 来自 kartspec/param.xml 的 `t1ImageName`(默认 '1')→ 1.png = 涂装模板;
+  - **0.png = 全白底图 + alpha 涂装遮罩**(直接用就是纯白);
+  - 无 2.png(副色层)→ 走 Dw(0.png, 1.png, primary, high)(与人物 body 相同算法);
+    有 2.png → CC():t1 像素 (255,0,255,255) 跳过、(0,255,255,255) 用 secondColor
+    系(source 换 2.png),其余同 Dw。
+  - 之后 RC() 叠号牌/号码(蓝 (0,0,255,255) / 白 (0,255,255,255) 标记像素)。
+- 颜色来源: itemTable.kml `<kart name='cotton1' orgColorId='4'>` →
+  `<color id='4' base='255 58 174 25' high='255 210 255 0'>`(녹색/绿)。
+  ⇒ 板车官方配色 = 绿底黄高光,不是白色!
+- kart_gltf.py 已实现该合成(复用 char_gltf.compose_body_texture)。

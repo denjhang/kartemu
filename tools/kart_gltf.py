@@ -20,6 +20,7 @@ import numpy as np
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import s1_parse as S
 from s1_gltf import (GltfBuilder, unwrap, extract_kv, extract_qv, compose)
+from char_gltf import compose_body_texture
 
 
 def mat4_to_gltf(m):
@@ -34,9 +35,9 @@ def node_matrix(n):
                    tr.get('scale', (1, 1, 1)))
 
 
-def opaque_png(path, out_path):
-    from PIL import Image
-    Image.open(path).convert('RGB').save(out_path)
+# itemTable.kml: <kart id='11' name='cotton1' orgColorId='4'> → color id=4 녹색
+COTTON1_PRIMARY = (58, 174, 25)
+COTTON1_HIGH = (210, 255, 0)
 
 
 def convert(src_path, out_dir, base):
@@ -59,7 +60,12 @@ def convert(src_path, out_dir, base):
             src_tex = p
             break
     if src_tex:
-        opaque_png(src_tex, os.path.join(tex_dir, '0.png'))
+        # 官方 tu(): 无 2.png 时走 Dw(0.png=底图, t1=涂装模板, primary, high);
+        # 0.png 是全白底+alpha 涂装遮罩, 不合成则纯白
+        t1 = os.path.join(os.path.dirname(src_path), '1.png')
+        compose_body_texture(src_tex, t1 if os.path.exists(t1) else None,
+                             COTTON1_PRIMARY, COTTON1_HIGH,
+                             os.path.join(tex_dir, '0.png'))
         B.images.append({'uri': base + '_textures/0.png'})
         B.gltf_textures.append({'source': 0})
         mat = {'name': 'kart', 'doubleSided': True,
