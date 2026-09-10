@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>人物单独渲染 - 皮蛋(骨骼蒙皮 + 官方动画)</title>
+<style>
+  html, body { margin: 0; overflow: hidden; background: #202530; }
+  #ui { position: fixed; left: 12px; top: 12px; color: #fff; font: 13px/1.7 monospace;
+        text-shadow: 0 1px 2px #000; user-select: none; }
+  button { margin: 2px; padding: 3px 8px; font: 12px monospace; cursor: pointer; }
+  button.on { background: #4af; color: #fff; border: none; }
+</style>
+<script type="importmap">
+{ "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.178.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.178.0/examples/jsm/"
+} }
+</script>
+</head>
+<body>
+<div id="ui">
+  <div id="info">加载中…</div>
+  <div id="clips"></div>
+  <div style="color:#9ab">官方状态→动作: 0:f00(待机) 8:f45 9:f46(驾驶) 10:f47 … 19:f54</div>
+</div>
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setSize(innerWidth, innerHeight);
+renderer.setPixelRatio(devicePixelRatio);
+document.body.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x202530);
+const camera = new THREE.PerspectiveCamera(40, innerWidth / innerHeight, 0.05, 100);
+camera.position.set(0, 1.2, 3.2);
+const controls = new OrbitControls(camera, renderer.domElement);
+window.__cam = camera; window.__controls = controls;
+controls.target.set(0, 0.5, 0);
+
+scene.add(new THREE.HemisphereLight(0xffffff, 0x445566, 2.0));
+// 网格地面(1 格 = 0.25m, 官方人物身高约 0.8m)
+const grid = new THREE.GridHelper(4, 16, 0x556, 0x334);
+scene.add(grid);
+
+new GLTFLoader().load('character/dao.gltf', (g) => {
+  scene.add(g.scene);
+  window.__char = { scene, mixer: null, gltf: g, THREE };
+  g.scene.traverse(o => { if (o.isMesh) o.frustumCulled = false; });
+  const mixer = new THREE.AnimationMixer(g.scene);
+  window.__char.mixer = mixer;
+  const clips = g.animations;
+  const stateNames = { f00: '0 待机', f45: '8 骑乘上', f46: '9 驾驶', f47: '10',
+                       f48: '11', f49: '12', f50: '13', f51: '14', f11: '18', f54: '19' };
+  const box = new THREE.Box3().setFromObject(g.scene);
+  const h = box.max.y - box.min.y;
+  const ctr = box.getCenter(new THREE.Vector3());
+  controls.target.copy(ctr);
+  camera.position.set(ctr.x + 1.6, ctr.y + 1.1, ctr.z + 2.6);
+  controls.update();
+  document.getElementById('info').textContent =
+    `骨骼蒙皮加载成功 · 动画 ${clips.length} 个 · 绑定包围盒高 ${h.toFixed(3)}m · 中心 ${ctr.x.toFixed(2)},${ctr.y.toFixed(2)},${ctr.z.toFixed(2)}`;
+  const div = document.getElementById('clips');
+  let cur = null;
+  for (const c of clips) {
+    const b = document.createElement('button');
+    b.textContent = stateNames[c.name] || c.name;
+    b.onclick = () => {
+      if (cur) cur.stop();
+      cur = mixer.clipAction(c);
+      cur.reset().play();
+      for (const x of div.children) x.classList.remove('on');
+      b.classList.add('on');
+    };
+    div.appendChild(b);
+  }
+  // 默认播放待机 f00
+  div.children[0].click();
+
+  const clock = new THREE.Clock();
+  renderer.setAnimationLoop(() => {
+    mixer.update(clock.getDelta());
+    controls.update();
+    renderer.render(scene, camera);
+  });
+}, undefined, (e) => {
+  document.getElementById('info').textContent = '加载失败: ' + (e.stack || e.message).split('\n').slice(0, 5).join(' | ');
+  console.error(e);
+});
+
+addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+});
+</script>
+</body>
+</html>

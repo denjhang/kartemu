@@ -336,3 +336,57 @@ Z -0.22~+1.50(坐姿腿前伸 1.72)——标准 Y-up 直立坐姿, 全链公式�
 - 实测(游戏内侧视图): 皮蛋以官方骑乘姿态(前倾握把)坐在板车挂点上, 比例正确。
 - 遗留: 广告牌背面渲染为实心橙(cull 方向/alpha 待查); 人物动画循环(可选);
   官方 body 贴图合成(Fw/Dw primaryColor/highColor, 当前用 dye6 蓝近似)。
+
+## 20. 人物骨骼蒙皮 glTF + 完整装配语义(2026-09-10, 修正 §18/§17 局部错误)
+
+### 20.1 空间约定修正(重要!)
+- **人物 model.1s 数据本身是 Z-up**(与赛道/车辆一致)。此前"人物 Y-up、不加旋转"的结论错误。
+- 官方 `Bw` 装配: `convertClientCoordinates: (context === "card")` ——
+  仅立绘(card 肖像, 参见 deob_named.js L19945)才给根加 `rotation.x = -π/2`;
+  赛车场景**不加**, 因为人物挂在赛车已旋转的子树(child[6])里, 由父级完成 Z-up→Y-up。
+- ⇒ **独立渲染人物必须自带 RotX(-90°) 根节点**;在赛车内挂载时不加(父级已有)。
+  漏加即"躺平一坨 + 脸漂在旁边"(本次头/脸错位的根因)。
+
+### 20.2 官方装配(Bw, deob_named.js L13282-13412)
+- 递归 `_0x13bd99` 建 three 树: ReToonSkinned→YT(蒙皮几何), ReToonRigid→静态网格,
+  其它 Relement→Group;每个节点 setNodeMatrixUC(自身 transform)。
+- **刚性挂接表(每帧更新)**:
+  - root.children[1](face): `matrix = skin[5] × 自身matrix`(local 在装配时快照)
+  - root.children[2](head): `matrix = skin[5] × 自身matrix`
+  - root.children[3]: `matrix = skin[5]`(丢弃自身 transform!)
+  - root.children[4](handL): `matrix = skin[9]`(丢弃)
+  - root.children[5](handR): `matrix = skin[14]`(丢弃)
+  注意乘的是 **skin[bone] = world[bone]×inverseBind**(含逆绑定),不是 world[bone];
+  元素子树后代的 transform 保留。
+- 脸贴图传播: `name==='face'` 的子树全部用 face 贴图(f00_0.tga→f00_0.png→f00.tga→f00.png,
+  官方 nC 的回退顺序),其余用 body 合成贴图(Fw/Dw)。
+
+### 20.3 官方蒙皮几何(YT 类, L13005-13064)
+- 顶点按 **wedge** 去重(position 每 wedge 一个, 由其 skinVertexIndex 的顶点蒙皮得出)。
+- `update(pose)`: world[0]=pose[0]; world[i]=mm(world[parent], pose[i])(仅 enabled 骨骼);
+  **skin[i] = mm(world[i], inverseBind)**; fm() 双骨骼线性混合(bone1=0xffff 表示无)。
+- 构造时初始 pose = bones[].localBind —— **localBind 链 ≠ inv(inverseBind) 链**
+  (实测 |bind_world×ib − I| 最大 2.0, 两者不自洽, 官方绑定语义只认 inverseBind)。
+
+### 20.4 官方动作求值(Sr, L3074-3136)
+- 每通道: position 缺失 → [0,0,0]; rotation 缺失 → identity 四元数。
+- position 记录 16B(time+xyz)线性插值; rotation 记录 20B, value=[f8,f12,f16,f4]=(x,y,z,w),
+  插值 g0()(slerp)。时间经 pl(): anchor/phase/frequency 变换(循环控制)。
+- rootChannel = Int(脸部状态索引, 直接取左端关键帧值)。
+
+### 20.5 glTF 骨骼蒙皮导出(char_gltf.py, 全链数值验证)
+- 骨架: 24 关节节点, 局部静止矩阵 = inv(world_rest[parent]) @ inv(inverseBind)
+  (保证静止时 jointMatrix=I;localBind 弃用)。刚性 face 挂 bone5 下,
+  local = inverseBind[5] × m_walked(与官方 skin[5]×m 等价, 已证)。
+- 蒙皮: JOINTS_0/WEIGHTS_0 **必须 VEC4**(VEC2 → three.js 读到 undefined 关节崩溃)。
+- 动画: character_common 全部 32 个 fXX.1s → glTF 剪辑(60Hz 重采样,
+  旋转曲线按官方 slerp 语义由 mixer 插值), 状态映射 0:f00/8:f45/9:f46/.../19:f54。
+- 根: zup_root RotX(-90°)(独立渲染), 赛车内挂载时去掉该根(用 char_root)。
+- **数值验证**: 按 glTF 规范独立重算(解析 dao.gltf+dao.bin), f00@0.5s 与官方
+  eval_pose 逐顶点对拍, body 最大偏差 3.6e-5, face 矩阵偏差 2e-5 —— 全链闭环。
+- 浏览器实测: 皮蛋站立(f00)+骑乘前倾握把(f45)姿态、脸部贴图、dye6 蓝全部正确。
+
+### 20.6 身体贴图合成(官方 Fw/Dw, L13426-13460, 可选增强)
+- body 0.png 与 high 贴图逐像素: high 像素 (255,0,255) 跳过;body RGB>0x7f 处取 highColor,
+  否则取原色;与 primaryColor 做.dst 255 混合: `Tr(a,b,m) = a*(255-m)/255 + b*m/255`,
+  再与 high 的 RGB 按 high alpha 混合, 输出 alpha=255。当前克隆用整片 dye 蓝近似。
