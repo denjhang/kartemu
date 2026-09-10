@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>Kartemu 原型 - 城镇高速公路</title>
+<style>
+  html, body { margin: 0; overflow: hidden; background: #000; }
+  #hud { position: fixed; left: 12px; top: 12px; color: #fff; font: 14px/1.6 monospace;
+         text-shadow: 0 1px 2px #000; user-select: none; }
+  #help { position: fixed; left: 12px; bottom: 12px; color: #bbb; font: 12px/1.6 monospace;
+          text-shadow: 0 1px 2px #000; }
+</style>
+<script type="importmap">
+{ "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.178.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.178.0/examples/jsm/"
+} }
+</script>
+</head>
+<body>
+<div id="hud"></div>
+<div id="help">↑/W 油门 · ↓/S 刹车/倒车 · ←→/AD 转向 · 空格 漂移 · R 重置到起点</div>
+<script type="module">
+import * as THREE from 'three';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+
+// ---- kartspec.csv id=1 速度4(标准速度) 核心参数 ----
+const SPEC = {
+  mass: 100, forwardAccel: 2160, backwardAccel: 1775, gripBrake: 2070, slipBrake: 1415,
+  maxSteerDeg: 10, steerConstraint: 22.25, frontGrip: 5, rearGrip: 5,
+  driftEscapeForce: 2600, normalBoosterTime: 3000,
+  boostAccelFactor: 1.4955, transAccelFactor: 1.4939999,
+};
+// 经验缩放:把官方内部单位折算到 米/秒 制
+const K = { accel: SPEC.forwardAccel / 2160 * 22, brake: SPEC.gripBrake / 2070 * 26,
+            maxSpeed: 52, steerMax: THREE.MathUtils.degToRad(SPEC.maxSteerDeg) * 2.2 };
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x87b5e0);
+scene.fog = new THREE.Fog(0x87b5e0, 400, 1600);
+const camera = new THREE.PerspectiveCamera(60, innerWidth / innerHeight, 0.1, 3000);
+const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
+renderer.setSize(innerWidth, innerHeight);
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+document.body.appendChild(renderer.domElement);
+scene.add(new THREE.HemisphereLight(0xcfe5ff, 0x506050, 1.15));
+const sun = new THREE.DirectionalLight(0xfff4e0, 1.4);
+sun.position.set(200, 400, 150);
+scene.add(sun);
+
+const hud = document.getElementById('hud');
+const meta = await fetch('track/track_meta.json').then(r => r.json());
+
+// ---- 载入赛道 ----
+const loader = new GLTFLoader();
+const trackGltf = await loader.loadAsync('track/track.gltf');
+const track = trackGltf.scene;
+scene.add(track);
+
+// ---- ToRoad 中心线:选帧数最多的路线作为主行驶线 ----
+let guide = null, startFwd = new THREE.Vector3(0, 0, 1);
+for (const rd of meta.roads) {
+  if (rd.frames.length > (guide ? guide.frames.length : 0)) guide = rd;
+}
+const roadPts = [];
+if (guide) {
+  for (const f of guide.frames) roadPts.push(new THREE.Vector3(...f.position));
+  if (guide.frames[0].forward) startFwd.set(...guide.frames[0].forward);
+  const line = new THREE.Line(new THREE.BufferGeometry().setFromPoints(roadPts),
+                              new THREE.LineBasicMaterial({ color: 0xff00ff }));
+  scene.add(line);
+  console.log('主行驶线:', guide.objName || guide.name, '点数:', roadPts.length);
+}
+
+// ---- 起点位置:主行驶线首帧,朝向沿 storedForward ----
+const startV = new THREE.Vector3(0, 5, 0);
+let startYaw = 0;
+if (roadPts.length) {
+  startV.copy(roadPts[0]);
+  startYaw = Math.atan2(startFwd.x, startFwd.z);
+} else if (meta.start && meta.start.transform) {
+  const t = meta.start.transform;
+  startV.set(...(t.position || t.translation));
+}
+
+// ---- 载入板车 ----
+const kartGltf = await loader.loadAsync('kart/kart.gltf');
+const kart = kartGltf.scene;
+scene.add(kart);
+// 包一层,便于把模型朝向对齐 +(前)
+const kartPivot = new THREE.Group();
+kartPivot.add(kart);
+scene.add(kartPivot);
+
+// ---- 载入皮蛋(绑定姿态,坐在车上) ----
+let rider = null;
+try {
+  const daoGltf = await loader.loadAsync('character/dao.gltf');
+  rider = new THREE.Group();
+  rider.add(daoGltf.scene);
+  rider.scale.setScalar(1.0);
+  rider.position.set(0, 0.45, 0.1); // 座位粗调,后续对接官方 attachment 槽位
+  kartPivot.add(rider);
+} catch (e) { console.warn('人物载入失败', e); }
+
+// ---- 简化驾驶物理(后续替换为 kartspec 全参数积分) ----
+const car = {
+  pos: startV.clone(), vel: new THREE.Vector3(), yaw: 0, steer: 0,
+  onGround: true, vy: 0,
+};
+car.yaw = startYaw;
+
+const keys = {};
+addEventListener('keydown', e => { keys[e.code] = true; if (e.code === 'KeyR') respawn(); });
+addEventListener('keyup', e => keys[e.code] = false);
+
+function respawn() {
+  car.pos.copy(startV); car.vel.set(0, 0, 0); car.vy = 0;
+  car.yaw = startYaw;
+}
+
+// 地面高度采样:对 track 场景做向下射线
+const ray = new THREE.Raycaster();
+ray.far = 500;
+const down = new THREE.Vector3(0, -1, 0);
+function groundY(x, z, from) {
+  ray.set(new THREE.Vector3(x, from, z), down);
+  const hits = ray.intersectObject(track, true);
+  return hits.length ? hits[0].point.y : null;
+}
+
+const fwd = new THREE.Vector3();
+const clock = new THREE.Clock();
+let speedKmh = 0;
+
+function step(dt) {
+  const throttle = (keys.KeyW || keys.ArrowUp) ? 1 : 0;
+  const braking = (keys.KeyS || keys.ArrowDown) ? 1 : 0;
+  const left = (keys.KeyA || keys.ArrowLeft) ? 1 : 0;
+  const right = (keys.KeyD || keys.ArrowRight) ? 1 : 0;
+
+  // 转向(带回正)
+  const target = (right - left) * K.steerMax;
+  car.steer += (target - car.steer) * Math.min(1, dt * 8);
+
+  fwd.set(Math.sin(car.yaw), 0, Math.cos(car.yaw));
+  const vFwd = car.vel.dot(fwd);
+  const speed = car.vel.length();
+
+  // 纵向力
+  let a = 0;
+  if (throttle) a += K.accel * (1 - Math.min(1, Math.abs(vFwd) / K.maxSpeed));
+  if (braking) a -= vFwd > 0.5 ? K.brake : K.accel * 0.5; // 低速倒车
+  // 空气阻力(简化 airFriction)
+  a -= vFwd * 0.15;
+
+  // 转向改变航向:速度越快角速度越低
+  const steerEff = car.steer * (0.35 + 0.65 / (1 + speed * 0.04));
+  car.yaw += steerEff * dt * Math.min(1, Math.abs(vFwd) / 6) * (vFwd < -0.5 ? -1 : 1);
+
+  // 侧向抓地:衰减垂直于前方的速度分量
+  const side = new THREE.Vector3(fwd.z, 0, -fwd.x);
+  const vSide = car.vel.dot(side);
+  const gripK = keys.Space ? 2.5 : 12; // 空格=漂移(降低侧向抓地)
+  car.vel.addScaledVector(side, -vSide * Math.min(1, gripK * dt));
+
+  car.vel.addScaledVector(fwd, a * dt);
+  car.vel.y += -30 * dt * (car.onGround ? 0 : 1);
+  car.pos.addScaledVector(car.vel, dt);
+
+  // 地面贴合
+  const gy = groundY(car.pos.x, car.pos.z, car.pos.y + 50);
+  if (gy !== null) {
+    if (car.pos.y <= gy + 0.05 || car.pos.y > gy) {
+      if (car.pos.y <= gy + 0.5) {
+        car.pos.y = gy;
+        if (car.vel.y < 0) car.vel.y = 0;
+        car.onGround = true;
+      } else car.onGround = false;
+    }
+  } else if (car.pos.y < -60) respawn();
+
+  kartPivot.position.copy(car.pos);
+  kartPivot.rotation.y = car.yaw;
+  kartPivot.rotation.z = -car.steer * 0.6;
+  speedKmh = car.vel.length() * 3.6;
+}
+
+function hud_update() {
+  hud.innerHTML = `城镇高速公路 · 板车 cotton1<br>
+速度: <b>${speedKmh.toFixed(0)}</b> km/h<br>
+中心线点: ${roadPts.length}`;
+}
+
+function frame() {
+  const dt = Math.min(clock.getDelta(), 0.05);
+  step(dt);
+  hud_update();
+  // 追尾相机
+  if (!location.search.includes('bird') && !window.freeCam) {
+    const back = new THREE.Vector3(Math.sin(car.yaw), 0, Math.cos(car.yaw)).multiplyScalar(-9);
+    const camTarget = car.pos.clone().add(back).add(new THREE.Vector3(0, 4.2, 0));
+    camera.position.lerp(camTarget, Math.min(1, dt * 5));
+    camera.lookAt(car.pos.clone().add(new THREE.Vector3(0, 1.5, 0)));
+  }
+  renderer.render(scene, camera);
+  requestAnimationFrame(frame);
+}
+window.car = car; window.track = track; window.kartPivot = kartPivot; window.camera = camera; window.scene = scene; window.renderer = renderer; window.THREE = THREE;
+  // ?cam=x,y,z,tx,ty,tz 自由相机
+  const cm = new URLSearchParams(location.search).get('cam');
+  if (cm) {
+    const [cx, cy, cz, tx, ty, tz] = cm.split(',').map(Number);
+    camera.position.set(cx, cy, cz);
+    camera.lookAt(tx, ty, tz);
+    window.freeCam = true;
+  }
+const bbox = new THREE.Box3().setFromObject(track);
+console.log('track bbox:', JSON.stringify(bbox));
+window.bbox = bbox;
+frame();
+</script>
+</body>
+</html>
