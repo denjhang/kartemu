@@ -28,6 +28,11 @@
     <label><input type="checkbox" id="cb-camera" checked>头戴摄像机</label>
     <label><input type="checkbox" id="cb-goggle" checked>风镜</label>
     <label><input type="checkbox" id="cb-balloon" checked>气球</label>
+    <label>人物动作 <select id="anim-sel">
+      <option value="f00" selected>f00 正常(待机)</option>
+      <option value="f46">f46 驾驶</option>
+      <option value="f45">f45 骑上</option>
+    </select></label>
   </div>
 </div>
 <script type="module">
@@ -53,7 +58,7 @@ const rotX = a => new THREE.Matrix4().makeRotationX(a);
 const rotZ = a => new THREE.Matrix4().makeRotationZ(a);
 
 let kartRoot, rekart, handleChild, wheelChildren = [], mainAngle = 0;
-let mixer = null, accMixer = null;
+let mixer = null, accMixer = null, balloonT = 0, balloonNodeRef = null;
 const parts = {};
 window.__parts = parts;
 
@@ -83,8 +88,13 @@ Promise.all([
   const charRoot = dao.scene.getObjectByName('char_root');
   kids[6].add(charRoot);
   mixer = new THREE.AnimationMixer(charRoot);
-  const f46 = dao.animations.find(a => a.name === 'f46');
-  if (f46) mixer.clipAction(f46).play();
+  let curAction = null;
+  window.__setCharAnim = (name) => {
+    if (curAction) curAction.stop();
+    const clip = dao.animations.find(a => a.name === name);
+    if (clip) { curAction = mixer.clipAction(clip); curAction.reset().play(); }
+  };
+  window.__setCharAnim('f00');
   parts.rider = charRoot;
 
   const hp = findByName(charRoot, 'headPhone');
@@ -92,27 +102,24 @@ Promise.all([
   const g0 = findByName(charRoot, 'goggle0');
   if (g0) { const gnode = innerRoot(gog); g0.add(gnode); parts.goggle = gnode; }
 
-  const w2 = kids[4], w3 = kids[5];
-  const t2 = new THREE.Vector3().setFromMatrixPosition(w2.matrix);
-  const t3 = new THREE.Vector3().setFromMatrixPosition(w3.matrix);
+  // 官方 o0(): balloon 锚点 = wheel2/wheel3 父节点平移中点。
+  // 圆气球浮在人物头顶上方约半头处(模型 z 0..1.03, 球心取 1.55),
+  // 上下浮动按官方 balloon_ani 节奏(1400ms, ±0.2);细绳连回锚点(视觉近似)。
+  const t2 = new THREE.Vector3().setFromMatrixPosition(kids[4].matrix);
+  const t3 = new THREE.Vector3().setFromMatrixPosition(kids[5].matrix);
+  const anchor = new THREE.Vector3((t2.x + t3.x) / 2, (t2.y + t3.y) / 2, (t2.z + t3.z) / 2);
   const balloonNode = new THREE.Group();
   balloonNode.name = 'balloon';
-  balloonNode.matrix.makeTranslation((t2.x + t3.x) / 2, (t2.y + t3.y) / 2, (t2.z + t3.z) / 2);
-  balloonNode.matrixAutoUpdate = false;
-  balloonNode.matrixWorldNeedsUpdate = true;
+  balloonNode.position.copy(anchor).add(new THREE.Vector3(0, 0.06, 1.03)); // 球底 z=1.03
   rekart.add(balloonNode);
-  const bnode = innerRoot(bal);
-  balloonNode.add(bnode);
-  // 细黑绳(视觉近似, 官方资产未含绳模型): 锚点 -> 气球底(浮动最低点 z≈0.37)
+  balloonNode.add(innerRoot(bal));
   const rope = new THREE.Mesh(
-    new THREE.CylinderGeometry(0.006, 0.006, 0.4, 6),
+    new THREE.CylinderGeometry(0.006, 0.006, 1, 6),
     new THREE.MeshBasicMaterial({ color: 0x111111 }));
-  rope.position.set(0, 0, 0.2);
+  rope.position.set(0, -0.03, -0.5 - anchor.z);
   balloonNode.add(rope);
-  // 官方 balloon_ani: PrsTontroller z 0.37..0.81 上下浮动(1400ms 循环)
-  accMixer = new THREE.AnimationMixer(balloonNode);
-  if (bal.animations[0]) accMixer.clipAction(bal.animations[0]).play();
-  parts.balloon = bnode;
+  balloonT = 0;
+  parts.balloon = balloonNode;
 
   const box = new THREE.Box3().setFromObject(kart.scene);
   const ctr = box.getCenter(new THREE.Vector3());
@@ -130,6 +137,8 @@ const steerEl = document.getElementById('steer');
 const speedEl = document.getElementById('speed');
 steerEl.oninput = () => document.getElementById('steerV').textContent =
   (+steerEl.value).toFixed(2);
+const animSel = document.getElementById('anim-sel');
+animSel.onchange = () => window.__setCharAnim && window.__setCharAnim(animSel.value);
 for (const [id, key] of [['cb-rider', 'rider'], ['cb-camera', 'camera'],
                           ['cb-goggle', 'goggle'], ['cb-balloon', 'balloon']]) {
   document.getElementById(id).onchange = e => {
@@ -142,7 +151,14 @@ const clock = new THREE.Clock();
 renderer.setAnimationLoop(() => {
   const dt = clock.getDelta();
   if (mixer) mixer.update(dt);
-  if (accMixer) accMixer.update(dt);
+  if (balloonT !== null) {
+    balloonT += dt;
+    const bob = 0.2 * Math.sin(balloonT * Math.PI * 2 / 1.4); // 官方 1400ms 节奏
+    if (parts.balloon) {
+      parts.balloon.position.z = 1.03 + bob;
+      parts.balloon.position.y = 0.557 + bob * 0.2;
+    }
+  }
   if (kartRoot) {
     mainAngle = (mainAngle + dt * (+speedEl.value)) % (Math.PI * 2);
     const steerRot = rotZ((+steerEl.value) * 3);

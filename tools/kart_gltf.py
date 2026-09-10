@@ -41,7 +41,7 @@ COTTON1_HIGH = (210, 255, 0)
 PLATE_PATH = 'unpacked/stuff2_plate/texture/2009@zz.png'
 
 
-def overlay_number(comp_path, digit):
+def overlay_number(comp_path, digit, src_tex_path):
     """官方 RC/PC: 白标 (0,255,255,255) = 车号锚点, 10x17 数字区域按 primary 上色。
     number.png 数字集缺失, 用 PIL 等效绘制。cotton1 白标 x48/x151 y98(车头两侧)。"""
     from PIL import Image, ImageDraw
@@ -53,10 +53,31 @@ def overlay_number(comp_path, digit):
     if not white.any():
         return False
     ys, xs = np.where(white)
-    draw = ImageDraw.Draw(im)
+    from PIL import ImageFont
+    try:
+        font = ImageFont.truetype('arial.ttf', 13)
+    except OSError:
+        font = ImageFont.load_default()
+    # 车头徽章圆圈: 模板 1.png 中环绕白标的亮色圆盘, 求其质心即为圆心
+    tpl = np.array(Image.open(os.path.join(os.path.dirname(src_tex_path), '1.png')))
     for x0, y0 in zip(xs.tolist(), ys.tolist()):
-        draw.rectangle([x0, y0, x0 + 9, y0 + 16], fill=(58, 174, 25, 255))
-        draw.text((x0 + 2, y0 - 1), str(digit), fill=(255, 255, 255, 255))
+        win = 16
+        ysl, ysh = max(0, y0 - win), y0 + win
+        xsl, xsh = max(0, x0 - win), x0 + win
+        region = tpl[ysl:ysh, xsl:xsh]
+        lum = region[..., :3].astype(int).sum(axis=2)
+        mask = (lum > 500) & (region[..., 3] > 200)   # 亮色(白/浅灰)徽章像素
+        if mask.sum() < 10:
+            continue
+        ys2, xs2 = np.where(mask)
+        cx, cy = int(xs2.mean()) + xsl, int(ys2.mean()) + ysl
+        cell = Image.new('RGBA', (10, 17))
+        d2 = ImageDraw.Draw(cell)
+        bbox = d2.textbbox((0, 0), str(digit), font=font)
+        w, h = bbox[2] - bbox[0], bbox[3] - bbox[1]
+        d2.text(((10 - w) / 2 - bbox[0], (17 - h) / 2 - bbox[1]), str(digit),
+                fill=(58, 174, 25, 255), font=font)
+        im.paste(cell, (cx - 5, cy - 8), cell)
     im.save(comp_path)
     return True
 
@@ -107,7 +128,7 @@ def convert(src_path, out_dir, base):
                              os.path.join(tex_dir, '0.png'))
         if os.path.exists(PLATE_PATH):
             overlay_plate(os.path.join(tex_dir, '0.png'), PLATE_PATH)
-        overlay_number(os.path.join(tex_dir, '0.png'), '1')
+        overlay_number(os.path.join(tex_dir, '0.png'), '1', src_tex)
         B.images.append({'uri': base + '_textures/0.png'})
         B.gltf_textures.append({'source': 0})
         mat = {'name': 'kart', 'doubleSided': True,

@@ -112,11 +112,11 @@ def convert(src_path, out_dir, base):
              'indices': a_i, 'material': mat_idx, 'mode': 4}], 'name': name})
         return len(B.gltf_meshes) - 1
 
-    def walk(n):
+    def walk(n, inherited_tex=None):
         n = unwrap(n)
         node = {'name': n.get('name') or n.get('className'),
                 'matrix': mat4_to_gltf(node_matrix(n))}
-        tex_name = None
+        tex_name = inherited_tex
         for s in (n.get('slots') or []):
             u = unwrap(s) if s else None
             if isinstance(u, dict) and u.get('kind') == 'texture' and u.get('name'):
@@ -131,7 +131,7 @@ def convert(src_path, out_dir, base):
         B.gltf_nodes.append(node)
         idx = len(B.gltf_nodes) - 1
         for c in n.get('children') or []:
-            ci = walk(c)
+            ci = walk(c, tex_name)
             if ci is not None:
                 node['children'] = node.get('children', []) + [ci]
         return idx
