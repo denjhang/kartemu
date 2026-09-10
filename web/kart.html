@@ -72,6 +72,7 @@ const drive = { speed: 0, steer: 0, heading: 0, boost: false, crashUntil: 0, tim
 
 let kartRoot, rekart, handleChild, wheelChildren = [], mainAngle = 0;
 let mixer = null, accMixer = null, balloonT = 0, balloonNodeRef = null;
+let flames = [], obstacles = [];
 const parts = {};
 window.__parts = parts;
 
@@ -138,7 +139,7 @@ Promise.all([
   parts.balloon = balloonNode;
 
   // 喷火(fire0 排气口: 车尾), 官方 booster 语义: 加速期火焰持续
-  const flames = [];
+  flames = [];
   for (const fx of [-0.28, 0.28]) {
     const flame = new THREE.Mesh(
       new THREE.ConeGeometry(0.07, 0.5, 8, 1, true),
@@ -152,7 +153,7 @@ Promise.all([
     flames.push(flame);
   }
   // 障碍柱(碰撞测试)
-  const obstacles = [];
+  obstacles = [];
   const obsMat = new THREE.MeshNormalMaterial();
   for (const [ox, oz] of [[6, 4], [-5, 6], [3, -6], [-7, -3]]) {
     const post = new THREE.Mesh(new THREE.CylinderGeometry(0.4, 0.4, 1.6, 10), obsMat);
