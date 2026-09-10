@@ -41,6 +41,26 @@ COTTON1_HIGH = (210, 255, 0)
 PLATE_PATH = 'unpacked/stuff2_plate/texture/2009@zz.png'
 
 
+def overlay_number(comp_path, digit):
+    """官方 RC/PC: 白标 (0,255,255,255) = 车号锚点, 10x17 数字区域按 primary 上色。
+    number.png 数字集缺失, 用 PIL 等效绘制。cotton1 白标 x48/x151 y98(车头两侧)。"""
+    from PIL import Image, ImageDraw
+    import numpy as np
+    im = Image.open(comp_path).convert('RGBA')
+    a = np.array(im)
+    white = np.all(np.stack([a[..., 0] == 0, a[..., 1] == 255, a[..., 2] == 255,
+                             a[..., 3] == 255]), axis=0)
+    if not white.any():
+        return False
+    ys, xs = np.where(white)
+    draw = ImageDraw.Draw(im)
+    for x0, y0 in zip(xs.tolist(), ys.tolist()):
+        draw.rectangle([x0, y0, x0 + 9, y0 + 16], fill=(58, 174, 25, 255))
+        draw.text((x0 + 2, y0 - 1), str(digit), fill=(255, 255, 255, 255))
+    im.save(comp_path)
+    return True
+
+
 def overlay_plate(comp_path, plate_path):
     """官方 RC/$C: 合成图上蓝色标记像素 (0,0,255,255) = 号牌槽, 整块替换为 45x20 号牌"""
     from PIL import Image
@@ -87,6 +107,7 @@ def convert(src_path, out_dir, base):
                              os.path.join(tex_dir, '0.png'))
         if os.path.exists(PLATE_PATH):
             overlay_plate(os.path.join(tex_dir, '0.png'), PLATE_PATH)
+        overlay_number(os.path.join(tex_dir, '0.png'), '1')
         B.images.append({'uri': base + '_textures/0.png'})
         B.gltf_textures.append({'source': 0})
         mat = {'name': 'kart', 'doubleSided': True,

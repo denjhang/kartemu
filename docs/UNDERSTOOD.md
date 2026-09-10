@@ -513,3 +513,18 @@ Port0/FirePort0/... 属性;attachmentNodes = 按名字在模型树找节点。
   (配件模型槽位含这些属性; TexProperty 注册于函数定义后)。
 - kart.html 完全体: 车+人+摄像机+风镜+气球, 各自 checkbox;
   挂点实测 camera→headPhone / goggle→goggle0 / balloon→后轮中点 / 人物→child[6]。
+
+### 23.5 反馈修正四项(2026-09-10)
+1. **人物驾驶动画**: f45 是"骑上"过渡(带头部转动), 常驻驾驶应播 **f46**
+   (官方状态 9 = f46 驾驶循环, 334ms, 躯干轻微摆动头固定)。
+2. **配件贴图全白**: `server.py` 的 /web/ 分支未做 URL 百分号解码,
+   韩文/特殊字符文件名(2010고글@zz.png、카메라.png)404 → 材质回退白色。
+   修复: translate_path 先 unquote。
+3. **气球浮动**: 官方气球分两种 —— `balloon.1s`(静态)与 `balloon_ani.1s`
+   (Object01 带 **PrsTontroller**, position 通道 z 0.37→0.81 缓升回落,
+   1400ms 循环, 19 键)。acc_gltf.py 已支持 PrsTontroller → glTF 动画;
+   气球本体 0..1.13 高, 叠加浮动后飘在车后上方。绳为视觉近似
+   (官方资产未含绳模型, 加 0.4m 细黑圆柱)。
+4. **车头车号**: 1.png 白标 (0,255,255,255) 两处(x48/x151 y98) = 官方 PC
+   车号锚点; number.png 数字集缺失(stuff2_ 索引为空), 用 PIL 等效绘制
+   绿底白字数字。cotton1 默认编号 1。

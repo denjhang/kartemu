@@ -24,7 +24,9 @@ class Handler(SimpleHTTPRequestHandler):
         super().__init__(*a, directory=ROOT, **kw)
 
     def translate_path(self, path):
-        path = path.split("?", 1)[0].split("#", 1)[0]
+        import urllib.parse
+        path = urllib.parse.unquote(path.split("?", 1)[0].split("#", 1)[0],
+                                    errors="surrogateescape")
         if path in MAPPING:
             real = os.path.normpath(MAPPING[path])
         elif path.startswith("/web/"):

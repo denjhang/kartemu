@@ -15,6 +15,7 @@ import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import s1_parse as S
+import char_pose as CP
 from s1_gltf import (GltfBuilder, unwrap, extract_kv, extract_qv, compose)
 
 
@@ -137,6 +138,57 @@ def convert(src_path, out_dir, base):
            'children': [inner], 'name': 'zup_root'}
     B.gltf_nodes.append(zup)
 
+    # PrsTontroller -> glTF 动画(气球浮动等; 官方 anchor/phase 循环简化为直接循环)
+    animations = []
+    import struct as _st
+    node_of_name = {n['name']: i for i, n in enumerate(B.gltf_nodes)}
+
+    def collect_prs(n):
+        n = unwrap(n)
+        for s in (n.get('slots') or []):
+            u = unwrap(s) if s else None
+            if isinstance(u, dict) and u.get('className') == 'PrsTontroller':
+                chans = []
+                name = n.get('name') or n.get('className')
+                tgt = node_of_name.get(name)
+                if tgt is None:
+                    continue
+                for which, comp in (('position', 'VEC3'), ('rotation', 'VEC4')):
+                    cur = u.get(which)
+                    if cur is None:
+                        continue
+                    cur = unwrap(cur)
+                    recs = cur.get('records') or []
+                    if not recs:
+                        continue
+                    if len(recs[0]) == 16:
+                        keys = sorted(CP.decode_vec3(r) for r in recs)
+                    else:
+                        keys = sorted(CP.decode_rot(r) for r in recs)
+                    times = np.array([k[0] / 1000.0 for k in keys], dtype='<f4')
+                    vals = np.array([k[1] for k in keys], dtype='<f4')
+                    bt = B.add_bv(times.tobytes(), None)
+                    B.accessors.append({'bufferView': bt, 'componentType': 5126,
+                                        'count': len(times), 'type': 'SCALAR'})
+                    a_t = len(B.accessors) - 1
+                    bv2 = B.add_bv(vals.tobytes(), None)
+                    B.accessors.append({'bufferView': bv2, 'componentType': 5126,
+                                        'count': len(times), 'type': comp})
+                    a_v = len(B.accessors) - 1
+                    chans.append({'sampler': len(chans),
+                                  'target': {'node': tgt, 'path': which},
+                                  '__s': {'input': a_t, 'output': a_v,
+                                          'interpolation': 'LINEAR'}})
+                if chans:
+                    anim = {'name': 'prs', 'channels': [],
+                            'samplers': [c.pop('__s') for c in chans]}
+                    anim['channels'] = chans
+                    animations.append(anim)
+        for c in n.get('children') or []:
+            collect_prs(c)
+
+    collect_prs(v)
+
     gltf = {
         'asset': {'version': '2.0', 'generator': 'kartemu acc_gltf'},
         'extensionsUsed': ['KHR_materials_unlit'],
@@ -150,6 +202,7 @@ def convert(src_path, out_dir, base):
         'accessors': B.accessors,
         'bufferViews': B.bufferViews,
         'buffers': [{'uri': base + '.bin', 'byteLength': len(B.bin)}],
+        'animations': animations,
     }
     os.makedirs(out_dir, exist_ok=True)
     with open(os.path.join(out_dir, base + '.gltf'), 'w', encoding='utf-8') as f:

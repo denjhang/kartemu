@@ -24,7 +24,7 @@
        <span id="steerV">0.00</span>
        车速 <input id="speed" type="range" min="0" max="30" step="0.5" value="8"></div>
   <div>
-    <label><input type="checkbox" id="cb-rider" checked>人物(f45)</label>
+    <label><input type="checkbox" id="cb-rider" checked>人物(f46驾驶)</label>
     <label><input type="checkbox" id="cb-camera" checked>头戴摄像机</label>
     <label><input type="checkbox" id="cb-goggle" checked>风镜</label>
     <label><input type="checkbox" id="cb-balloon" checked>气球</label>
@@ -53,7 +53,7 @@ const rotX = a => new THREE.Matrix4().makeRotationX(a);
 const rotZ = a => new THREE.Matrix4().makeRotationZ(a);
 
 let kartRoot, rekart, handleChild, wheelChildren = [], mainAngle = 0;
-let mixer = null;
+let mixer = null, accMixer = null;
 const parts = {};
 window.__parts = parts;
 
@@ -83,8 +83,8 @@ Promise.all([
   const charRoot = dao.scene.getObjectByName('char_root');
   kids[6].add(charRoot);
   mixer = new THREE.AnimationMixer(charRoot);
-  const f45 = dao.animations.find(a => a.name === 'f45');
-  if (f45) mixer.clipAction(f45).play();
+  const f46 = dao.animations.find(a => a.name === 'f46');
+  if (f46) mixer.clipAction(f46).play();
   parts.rider = charRoot;
 
   const hp = findByName(charRoot, 'headPhone');
@@ -103,6 +103,15 @@ Promise.all([
   rekart.add(balloonNode);
   const bnode = innerRoot(bal);
   balloonNode.add(bnode);
+  // 细黑绳(视觉近似, 官方资产未含绳模型): 锚点 -> 气球底(浮动最低点 z≈0.37)
+  const rope = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.006, 0.006, 0.4, 6),
+    new THREE.MeshBasicMaterial({ color: 0x111111 }));
+  rope.position.set(0, 0, 0.2);
+  balloonNode.add(rope);
+  // 官方 balloon_ani: PrsTontroller z 0.37..0.81 上下浮动(1400ms 循环)
+  accMixer = new THREE.AnimationMixer(balloonNode);
+  if (bal.animations[0]) accMixer.clipAction(bal.animations[0]).play();
   parts.balloon = bnode;
 
   const box = new THREE.Box3().setFromObject(kart.scene);
@@ -111,7 +120,7 @@ Promise.all([
   camera.position.set(ctr.x + 2.4, ctr.y + 1.6, ctr.z + 3.4);
   controls.update();
   document.getElementById('info').textContent =
-    '完全体就绪: 板车(绿漆+号牌) + 皮蛋(f45) + 头戴摄像机 + 风镜 + 气球';
+    '完全体就绪: 板车(绿漆+号牌) + 皮蛋(f46) + 头戴摄像机 + 风镜 + 气球';
 }).catch(e => {
   document.getElementById('info').textContent = '加载失败: ' + e.message;
   console.error(e);
@@ -133,6 +142,7 @@ const clock = new THREE.Clock();
 renderer.setAnimationLoop(() => {
   const dt = clock.getDelta();
   if (mixer) mixer.update(dt);
+  if (accMixer) accMixer.update(dt);
   if (kartRoot) {
     mainAngle = (mainAngle + dt * (+speedEl.value)) % (Math.PI * 2);
     const steerRot = rotZ((+steerEl.value) * 3);
