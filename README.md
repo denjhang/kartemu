@@ -55,3 +55,11 @@ python s1_gltf.py unpacked/character_dao/model.1s web/character dao --model
 本仓库只包含自研工具、文档与原型代码。KartSim 官方资源(mirror/、unpacked/)、
 反编译产物(deob_*.js、study_*.js、string_table.json)、从官方客户端提取的数据
 (kartspec.csv)及导出资产(web/track 等)全部被 .gitignore 排除,不得分发。
+
+## 维护备注
+
+- 推送:直连 github.com 超时,用 `git -c http.proxy=http://127.0.0.1:7892 push origin main`。
+- 严禁提交官方资产(mirror/、unpacked/、*.rho、deob_*、web/track|kart|character、
+  reference/ 等,见 .gitignore);git 历史已做过一次全量大文件清洗,勿再引入。
+- 本地预览:`python server.py` → http://127.0.0.1:8088/web/character.html(人物)、
+  /web/index.html(驾驶原型)。

@@ -70,3 +70,15 @@
 5. 把 index.html 的骑乘人物换成新的骨骼蒙皮版(挂到赛车子树时去掉 zup_root 旋转)。
 6. [已完成] KartRider-Tools v1.2.2 解包(产物全在 reference/, 已被 .gitignore 覆盖: exe/kt_extract/kt_pyz/dump)(PyInstaller+Py3.13, reference/kt_extract + kt_pyz +
    kt_karttools_dump.txt):karttools.* 解析器与本项目逆向一致(§21),rho 解密在外部 RhoLoader.exe。
+
+## 基础设施备注(2026-09-10)
+
+- **GitHub 推送**:`github.com:443` 直连超时,本机 `127.0.0.1:7892` 代理可用:
+  `git -c http.proxy=http://127.0.0.1:7892 push origin main`(未写入全局配置)。
+  远端 https://github.com/denjhang/kartemu.git。
+- **大文件清理(已完成)**:早期 commit 曾带入 mirror/*.rho 等官方资源(约 1.2GB),
+  已用 `git filter-branch --index-filter` 重写全部历史剔除
+  (mirror/ unpacked/ kartspec.csv deob_full.js aria2c.exe archive-index.*
+  web/track|kart|character),reflog expire + gc 后仓库 352KB。
+  **教训:任何官方资产在 add 前必须先查 .gitignore 是否覆盖**。
+- 本地静态服务:`python server.py` → http://127.0.0.1:8088(/web/ 前缀映射项目 web/)。
