@@ -69,11 +69,14 @@ def convert(src_path, out_dir, base):
             tex_idx = {'index': len(B.gltf_textures) - 1}
         else:
             tex_idx = None
+        pbr = {'metallicFactor': 0.0, 'roughnessFactor': 1.0}
+        if tex_idx is not None:
+            pbr['baseColorTexture'] = tex_idx
+            pbr['baseColorFactor'] = [1, 1, 1, 1]
+        else:
+            pbr['baseColorFactor'] = [0.7, 0.7, 0.7, 1.0]
         mat = {'name': key, 'doubleSided': True,
-               'pbrMetallicRoughness': {
-                   'baseColorTexture': tex_idx,
-                   'baseColorFactor': [0.7, 0.7, 0.7, 1.0] if tex_idx is None else [1, 1, 1, 1],
-                   'metallicFactor': 0.0, 'roughnessFactor': 1.0},
+               'pbrMetallicRoughness': pbr,
                'extensions': {'KHR_materials_unlit': {}}}
         B.materials.append(mat)
         B.material_idx[key] = len(B.materials) - 1
