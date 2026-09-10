@@ -24,21 +24,29 @@
        <span id="steerV">0.00</span>
        车速 <input id="speed" type="range" min="0" max="30" step="0.5" value="8"></div>
   <div>
-    <label><input type="checkbox" id="cb-rider" checked>人物(f46驾驶)</label>
+    <label><input type="checkbox" id="cb-rider" checked>人物(f40驾驶)</label>
     <label><input type="checkbox" id="cb-camera" checked>头戴摄像机</label>
     <label><input type="checkbox" id="cb-goggle" checked>风镜</label>
     <label><input type="checkbox" id="cb-balloon" checked>气球</label>
     <label>人物动作 <select id="anim-sel">
       <option value="auto" selected>自动(随驾驶状态)</option>
-      <option value="f00">f00 正常(待机)</option>
-      <option value="f40">f40 直行驾驶</option>
-      <option value="f46">f46 骑乘动作</option>
-      <option value="f40">f40 漂移</option>
-      <option value="f41">f41 左转摇头</option>
-      <option value="f42">f42 右转摇头</option>
-      <option value="f47">f47 碰撞</option>
-      <option value="f50">f50 倒车看后</option>
-      <option value="f11">f11 喷火后仰</option>
+      <option value="f40">f40 直行骑乘循环 1.37s</option>
+      <option value="f41">f41 左转pose 34ms</option>
+      <option value="f42">f42 右转pose 1ms</option>
+      <option value="f43">f43 左倒车过渡 34ms</option>
+      <option value="f44">f44 右倒车过渡 34ms</option>
+      <option value="f45">f45 右倒车固定pose 0.33s</option>
+      <option value="f46">f46 左倒车固定pose 0.33s</option>
+      <option value="f47">f47 强碰撞 0.53s</option>
+      <option value="f48">f48 小碰撞 0.17s</option>
+      <option value="f49">f49 胜利 3.0s</option>
+      <option value="f50">f50 失败 1.2s</option>
+      <option value="f51">f51 喷火后仰 1ms</option>
+      <option value="f52">f52 甩水雷 0.5s</option>
+      <option value="f53">f53 被水雷攻击 3.3s</option>
+      <option value="f54">f54 托腮 1ms</option>
+      <option value="f10">f10 站立 2.0s</option>
+      <option value="f11">f11 走路 0.67s</option>
     </select></label>
   <div style="color:#9ab">↑↓ 油门/倒车 · ←→ 转向 · Ctrl 喷火(N2O)</div>
   </div>
@@ -55,12 +63,32 @@ document.body.appendChild(renderer.domElement);
 
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x202530);
-const camera = new THREE.PerspectiveCamera(40, innerWidth / innerHeight, 0.05, 100);
+const camera = new THREE.PerspectiveCamera(40, innerWidth / innerHeight, 0.05, 2000);
 const controls = new OrbitControls(camera, renderer.domElement);
 window.__cam = camera; window.__controls = controls; window.__scene = scene;
 
 scene.add(new THREE.HemisphereLight(0xffffff, 0x445566, 2.0));
-scene.add(new THREE.GridHelper(8, 32, 0x556, 0x334));
+// 无限远网格(Shader)
+const gridMesh = new THREE.Mesh(
+  new THREE.PlaneGeometry(2000, 2000),
+  new THREE.ShaderMaterial({
+    vertexShader: `varying vec3 vWP; void main(){vec4 w=modelMatrix*vec4(position,1.);vWP=w.xyz;gl_Position=projectionMatrix*viewMatrix*w;}`,
+    fragmentShader: `
+      varying vec3 vWP;
+      void main(){
+        vec2 c=vWP.xz/2.;
+        vec2 g=abs(fract(c-.5)-.5)/fwidth(c);
+        float l=min(g.x,g.y);
+        float a=1.-min(l,1.);
+        float d=length(vWP.xz);
+        float fade=1.-smoothstep(60.,200.,d);
+        gl_FragColor=vec4(vec3(.22,.24,.28),a*.45*fade);
+      }`,
+    transparent: true, side: THREE.DoubleSide, depthWrite: false,
+  }));
+gridMesh.rotation.x = -Math.PI / 2;
+gridMesh.position.y = -0.01;
+scene.add(gridMesh);
 
 const rotX = a => new THREE.Matrix4().makeRotationX(a);
 const rotZ = a => new THREE.Matrix4().makeRotationZ(a);
@@ -69,7 +97,7 @@ const rotZ = a => new THREE.Matrix4().makeRotationZ(a);
 const keys = {};
 addEventListener('keydown', e => { keys[e.key] = true; if (e.key.startsWith('Arrow') || e.key === 'Control') e.preventDefault(); });
 addEventListener('keyup', e => { keys[e.key] = false; });
-const drive = { speed: 0, steer: 0, heading: 0, boost: false, crashUntil: 0, time: 0 };
+const drive = { speed: 0, steer: 0, heading: 0, boost: false, crashUntil: 0, time: 0, reversePhase: 'none' };
 
 let kartRoot, rekart, handleChild, wheelChildren = [], mainAngle = 0;
 let mixer = null, accMixer = null, balloonT = 0, balloonNodeRef = null;
@@ -104,15 +132,28 @@ Promise.all([
   kids[6].add(charRoot);
   mixer = new THREE.AnimationMixer(charRoot);
   let curAction = null, curName = '';
-  window.__setCharAnim = (name, soft) => {
-    if (soft && name === curName) return;   // 状态未变不重启
+  window.__setCharAnim = (name, soft, loopOnce) => {
+    if (soft && name === curName) return;
     curName = name;
-    if (curAction) curAction.stop();
     const clip = dao.animations.find(a => a.name === name);
-    if (clip) { curAction = mixer.clipAction(clip); curAction.reset().play(); }
+    if (!clip) return;
+    const action = mixer.clipAction(clip);
+    if (loopOnce) {
+      action.setLoop(THREE.LoopOnce);
+      action.clampWhenFinished = true;
+    } else {
+      action.setLoop(THREE.LoopRepeat);
+      action.clampWhenFinished = false;
+    }
+    action.reset().play();
+    if (curAction && curAction !== action) curAction.stop();
+    curAction = action;
   };
-  window.__setCharAnim('f00');
+  // f40 直行循环
+  window.__setCharAnim('f40');
   parts.rider = charRoot;
+  window.__charRoot = charRoot;
+  window.__daoAnim = dao.animations;
 
   const hp = findByName(charRoot, 'headPhone');
   if (hp) { const c = innerRoot(cam); hp.add(c); parts.camera = c; }
@@ -165,9 +206,8 @@ Promise.all([
 
   const box = new THREE.Box3().setFromObject(kart.scene);
   const ctr = box.getCenter(new THREE.Vector3());
-  controls.target.copy(ctr);
-  camera.position.set(ctr.x + 2.4, ctr.y + 1.6, ctr.z + 3.4);
-  controls.update();
+  camera.position.set(ctr.x, ctr.y + 3.5, ctr.z - 9);
+  camera.lookAt(ctr);
   document.getElementById('info').textContent =
     '完全体就绪: 板车(绿漆+号牌) + 皮蛋(自动状态机) + 头戴摄像机 + 风镜 + 气球';
 }).catch(e => {
@@ -223,22 +263,67 @@ renderer.setAnimationLoop(() => {
     const dx = kartRoot.position.x - ob.position.x;
     const dz = kartRoot.position.z - ob.position.z;
     if (dx * dx + dz * dz < 1.2 && Math.abs(drive.speed) > 2) {
-      drive.crashUntil = drive.time + 1.0;      // 官方: 强碰撞 f47 锁 1s
+      drive.crashUntil = drive.time + 0.5;                      // f47 强碰撞 0.5s
       drive.speed = -drive.speed * 0.3;
       kartRoot.position.x += dx * 0.3; kartRoot.position.z += dz * 0.3;
     }
   }
-  // ---- 官方状态机(f0/fd/T1 语义) ----
+  // ---- 状态机(用户确认的动画含义) ----
+  // f40=直行循环, f41/f42=左转/右转pose, f43/f44=左/右倒车固定姿态
+  // f45/f46=倒车向后看过渡(播完→自动切f43/f44), f47=强碰撞
+  // f51=喷火后仰, f52=甩水雷, f53=被水雷攻击, f49=胜利, f50=失败
   if (animSel.value === 'auto') {
-    let st;
-    if (drive.time < drive.crashUntil) st = 'f47';            // 0xa 强碰撞
-    else if (drive.boost) st = 'f11';                          // 0x12 喷火后仰
-    else if (Math.abs(drive.speed) < 0.3) st = 'f00';          // 0x0 待机
-    else if (drive.speed < -0.3) st = 'f50';                   // 倒车: 扭头看后
-    else if (drive.steer > 0.3) st = 'f41';                    // 左转摇头
-    else if (drive.steer < -0.3) st = 'f42';                   // 右转摇头
-    else st = 'f40';                                           // 直行驾驶(官方 fd(): 头部稳定的骑乘循环)
-    window.__setCharAnim && window.__setCharAnim(st, true);
+    let st, once = false;
+    const isReverse = drive.speed < 0;
+    if (drive.boost) { st = 'f51'; once = true; }
+    else if (drive.crashUntil > drive.time) {
+      st = 'f47'; once = true;
+    } else if (isReverse) {
+      // 倒车配对: 左=f43(过渡)→f46(固定pose), 右=f44(过渡)→f45(固定pose)
+      const isLeft = drive.steer >= -0.3;
+      const transClip = isLeft ? 'f43' : 'f44';
+      const poseClip = isLeft ? 'f46' : 'f45';
+      if (drive.reversePhase === 'none') {
+        window.__setCharAnim(transClip, false, true);
+        drive.reversePhase = 'transition';
+        drive.reverseDir = isLeft ? 'left' : 'right';
+        st = transClip; once = true;
+      } else if (drive.reversePhase === 'transition') {
+        const newDir = isLeft ? 'left' : 'right';
+        if (newDir !== drive.reverseDir) {
+          window.__setCharAnim(transClip, false, true);
+          drive.reverseDir = newDir;
+          st = transClip; once = true;
+        } else {
+          const clips = window.__daoAnim;
+          const tc = clips && clips.find(a => a.name === transClip);
+          const ta = tc && mixer ? mixer.existingAction(tc) : null;
+          if (ta && ta.time >= tc.duration - 0.01) {
+            drive.reversePhase = 'pose';
+            window.__setCharAnim(poseClip, false, true);
+            st = poseClip; once = true;
+          } else {
+            st = transClip; once = true;
+          }
+        }
+      } else {
+        const newDir = isLeft ? 'left' : 'right';
+        if (newDir !== drive.reverseDir) {
+          window.__setCharAnim(transClip, false, true);
+          drive.reversePhase = 'transition';
+          drive.reverseDir = newDir;
+          st = transClip; once = true;
+        } else {
+          st = poseClip; once = true;
+        }
+      }
+    } else {
+      drive.reversePhase = 'none';
+      if (drive.steer > 0.3)        { st = 'f41'; once = true; }  // 左转pose
+      else if (drive.steer < -0.3)  { st = 'f42'; once = true; }  // 右转pose
+      else st = 'f40';                                            // 直行循环
+    }
+    window.__setCharAnim(st, true, once);
   }
   // 火焰随喷火
   const firing = drive.boost;
@@ -297,9 +382,9 @@ renderer.setAnimationLoop(() => {
       if (w) apply(w, (i < 2) ? steerRot.clone().multiply(spin) : spin);
     });
   }
-  // 追逐相机: 目标与机位跟随车(保持用户 orbit 相对偏移)
-  if (kartRoot && drive.speed !== 0) {
-    controls.target.lerp(new THREE.Vector3(kartRoot.position.x, 0.7, kartRoot.position.z), 0.12);
+  // 追逐相机(保留 OrbitControls 鼠标调整)
+  if (kartRoot && Math.abs(drive.speed) > 0.5) {
+    controls.target.lerp(new THREE.Vector3(kartRoot.position.x, 1, kartRoot.position.z), 0.1);
   }
   controls.update();
   renderer.render(scene, camera);
