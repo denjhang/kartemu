@@ -38,7 +38,7 @@
   - **JOINTS_0/WEIGHTS_0 必须 VEC4**(VEC2 会让 three.js 读到 undefined 关节)。
   - localBind 与 inverseBind **不自洽**(|bind_world@ib - I| 最大 2.0),官方
     从不用 localBind 链做绑定,逆向结论:弃用 localBind。
-  - 刚性件挂接: local = inverseBind[bone] @ m_walked(官方 skin[bone]×local 的等价式, 已证)。
+  - 刚性件挂接: local = 纯 m_walked(官方 world[bone]×local;YT.update 返回 world 数组,非 skin)。
   - 根节点 zup_root RotX(-90°): 独立渲染必须有;赛车内挂载时应去掉(父级已有)。
 - `web/character.html`:独立查看页(OrbitControls + AnimationMixer + 32 动画按钮,
   自动取景)。当前 body 渲染正确,face 漂浮。

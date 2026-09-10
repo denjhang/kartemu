@@ -70,6 +70,41 @@ def _sample(curve, fn, t_ms):
     return keys[-1][1]
 
 
+def tr(a, b, m):
+    # 官方 Tr: a*(255-m)/255 + b*m/255
+    return min(255, (a * (255 - m)) // 255 + (b * m) // 255)
+
+
+def compose_body_texture(body_path, high_path, primary_rgb, high_rgb, out_path):
+    """官方 Fw/Dw body 贴图合成(UNDERSTOOD §20.6):
+    body 的 alpha 通道是涂装遮罩(非透明度);high 的 (255,0,255) 像素跳过;
+    body 亮区(RGB>0x7f)取 highColor, 否则取原色; 与 primaryColor 混合后
+    再与 high 的 RGB 按 high alpha 混合; 输出不透明。"""
+    from PIL import Image
+    body = Image.open(body_path).convert('RGBA')
+    bp = body.load()
+    hp = Image.open(high_path).convert('RGBA').load() if high_path else None
+    w, h = body.size
+    out = Image.new('RGBA', (w, h))
+    op = out.load()
+    for y in range(h):
+        for x in range(w):
+            br, bg, bb, ba = bp[x, y]
+            if hp is not None:
+                hr, hg, hb, ha = hp[x, y]
+                if (hr, hg, hb) == (255, 0, 255):
+                    op[x, y] = (br, bg, bb, 255)
+                    continue
+            else:
+                hr = hg = hb = ha = 0
+            bright = br > 0x7f or bg > 0x7f or bb > 0x7f
+            r0 = tr(primary_rgb[0], high_rgb[0] if bright else br, ba)
+            g0 = tr(primary_rgb[1], high_rgb[1] if bright else bg, ba)
+            b0 = tr(primary_rgb[2], high_rgb[2] if bright else bb, ba)
+            op[x, y] = (tr(r0, hr, ha), tr(g0, hg, ha), tr(b0, hb, ha), 255)
+    out.save(out_path)
+
+
 def convert(src_path, out_dir, base, anim_dir='unpacked/character_common'):
     root, _ = S.parse_auto(open(src_path, 'rb').read())
     v = unwrap(root)
@@ -148,8 +183,19 @@ def convert(src_path, out_dir, base, anim_dir='unpacked/character_common'):
             W.append((vt['weight0'], 1.0 - vt['weight0'], 0.0, 0.0))
         I.extend((start, start + 1, start + 2))
 
-    mat_body = B.get_material('0_body', out_dir, base, cull=1,
-                              force_color=[19 / 255, 121 / 255, 219 / 255, 1.0])  # dye6 base 皮蛋蓝
+    mat_body = B.get_material('0_body', out_dir, base, cull=1)
+    # 官方 Fw/Dw 合成 body 贴图(dye6: base=19,121,219 / high=0,252,255),
+    # 输出不透明合成图替换材质贴图(0.png 的 alpha 是涂装遮罩, 直接用会半透明)
+    tex_dir = os.path.join(out_dir, base + '_textures')
+    os.makedirs(tex_dir, exist_ok=True)
+    comp_path = os.path.join(tex_dir, '0_body.png')
+    compose_body_texture(find_texture('0'), find_texture('1'),
+                         (19, 121, 219), (0, 252, 255), comp_path)
+    B.images.append({'uri': base + '_textures/0_body.png'})
+    B.gltf_textures.append({'source': len(B.images) - 1})
+    B.materials[mat_body]['pbrMetallicRoughness']['baseColorTexture'] = {
+        'index': len(B.gltf_textures) - 1}
+    B.materials[mat_body]['pbrMetallicRoughness'].pop('baseColorFactor', None)
     Pdata = np.array(P, dtype='<f4')
     Ndata = np.array(N, dtype='<f4')
     UVdata = np.array(UV, dtype='<f4')
@@ -226,8 +272,10 @@ def convert(src_path, out_dir, base, anim_dir='unpacked/character_common'):
                                               'indices': aa4, 'material': mat_idx, 'mode': 4}],
                               'name': name or key})
         bone = BONE_OF_CHILD.get(top_idx)
+        # 官方 _0x54c179: object.matrix = YT.update()返回的 world[bone] × local。
+        # YT.update 返回的是 world 数组(非 skin) => glTF 子节点局部矩阵 = 纯 m_walked
         node = {'mesh': len(B.gltf_meshes) - 1, 'name': name or key,
-                'matrix': mat4_to_gltf(np.linalg.inv(bind_world[bone]) @ m if bone is not None else m)}
+                'matrix': mat4_to_gltf(m)}
         B.gltf_nodes.append(node)
         parent = joint_nodes[bone] if bone is not None else scene_nodes[0]
         B.gltf_nodes[parent]['children'] = B.gltf_nodes[parent].get('children', []) + \

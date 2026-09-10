@@ -356,8 +356,9 @@ Z -0.22~+1.50(坐姿腿前伸 1.72)——标准 Y-up 直立坐姿, 全链公式�
   - root.children[3]: `matrix = skin[5]`(丢弃自身 transform!)
   - root.children[4](handL): `matrix = skin[9]`(丢弃)
   - root.children[5](handR): `matrix = skin[14]`(丢弃)
-  注意乘的是 **skin[bone] = world[bone]×inverseBind**(含逆绑定),不是 world[bone];
-  元素子树后代的 transform 保留。
+  注意乘的是 **world[bone]**(YT.update 的返回值是 world 矩阵数组 _0x53cd32,
+  不是 skin——skin 只用于顶点蒙皮);元素子树后代的 transform 保留。
+  ⇒ glTF 挂 bone 节点下的局部矩阵 = 纯 m_walked(曾误乘 inverseBind 导致脸挂到屁股)。
 - 脸贴图传播: `name==='face'` 的子树全部用 face 贴图(f00_0.tga→f00_0.png→f00.tga→f00.png,
   官方 nC 的回退顺序),其余用 body 合成贴图(Fw/Dw)。
 
@@ -390,3 +391,9 @@ Z -0.22~+1.50(坐姿腿前伸 1.72)——标准 Y-up 直立坐姿, 全链公式�
 - body 0.png 与 high 贴图逐像素: high 像素 (255,0,255) 跳过;body RGB>0x7f 处取 highColor,
   否则取原色;与 primaryColor 做.dst 255 混合: `Tr(a,b,m) = a*(255-m)/255 + b*m/255`,
   再与 high 的 RGB 按 high alpha 混合, 输出 alpha=255。当前克隆用整片 dye 蓝近似。
+
+### 20.7 body 贴图合成落地(2026-09-10)
+- 0.png 的 alpha 是连续涂装遮罩(实测 0..255 连续),直接当透明度用 → 身体半透明。
+- `compose_body_texture()`(char_gltf.py)按 §20.6 算法离线合成:
+  body=0.png, high=1.png, dye6 primary=(19,121,219) high=(0,252,255),
+  输出不透明 0_body.png 替换材质贴图。实测:皮蛋蓝身+白高光/手套/鞋,与官方一致。
