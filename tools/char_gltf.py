@@ -109,24 +109,31 @@ def convert(src_path, out_dir, base, anim_dir='unpacked/character_common'):
     root, _ = S.parse_auto(open(src_path, 'rb').read())
     v = unwrap(root)
 
-    # 找 body 蒙皮几何 + 收集刚性件
+    # 完整镜像元素树: 无几何的槽位节点(headPhone/goggle0/...)也导出,
+    # 按官方 Bw 挂接表挂到对应骨骼, 供配件(摄像机/风镜等)挂载
     body_geo = None
     rigid = []  # (m_walked, top_idx, geo, name)
 
-    def walk(n, m, top_idx):
+    def walk_tree(n, m, top_idx):
         n = unwrap(n)
         m = m @ node_matrix(n)
+        rec = {'name': n.get('name') or n.get('className'), 'top': top_idx,
+               'matrix': m, 'children': []}
         if n.get('geometry'):
             geo = unwrap(n['geometry'])
             if 'vertices' in geo:
-                body_geo = geo  # noqa
+                body_geo = geo
                 rigid.append((m, geo, 'skin', top_idx, n.get('name')))
+                rec['geo'] = None
             else:
                 rigid.append((m, geo, 'rigid', top_idx, n.get('name')))
+                rec['geo'] = geo
+                rec['geo_kind'] = 'rigid'
         for i, c in enumerate(n.get('children') or []):
-            walk(c, m, i if top_idx == 0 else top_idx)
+            rec['children'].append(walk_tree(c, m, i if top_idx == 0 else top_idx))
+        return rec
 
-    walk(v, np.eye(4), 0)
+    tree = walk_tree(v, np.eye(4), 0)
     sk = [r for r in rigid if r[2] == 'skin']
     assert sk, '未找到蒙皮几何'
     body_geo = sk[0][1]
@@ -244,10 +251,8 @@ def convert(src_path, out_dir, base, anim_dir='unpacked/character_common'):
     B.gltf_nodes.append(zup_root)
     scene_nodes = [len(B.gltf_nodes) - 1]
 
-    # ---- 刚性件挂骨骼 ----
-    for m, geo, kind, top_idx, name in rigid:
-        if kind == 'skin':
-            continue
+    # ---- 元素子树完整镜像(刚性件 + 空槽位节点), 按官方 Bw 挂骨骼 ----
+    def emit_rigid_mesh(geo, name, top_idx):
         key = 'f00' if top_idx == 1 else '0'
         mat_idx = B.get_material(key, out_dir, base, cull=1)
         pp, nn, uuvv, ii = extract_kv(geo)[:4]
@@ -263,23 +268,38 @@ def convert(src_path, out_dir, base, anim_dir='unpacked/character_common'):
         b4 = B.add_bv(Id.tobytes(), 34963)
         aa1 = B.add_accessor(b1, 5126, len(pp), pmn2, pmx2)
         aa2 = B.add_accessor(b2, 5126, len(nn), None, None)
-        B.accessors.append({'bufferView': b3, 'componentType': 5126, 'count': len(uuvv), 'type': 'VEC2'})
+        B.accessors.append({'bufferView': b3, 'componentType': 5126,
+                            'count': len(uuvv), 'type': 'VEC2'})
         aa3 = len(B.accessors) - 1
-        B.accessors.append({'bufferView': b4, 'componentType': 5125, 'count': len(ii), 'type': 'SCALAR'})
+        B.accessors.append({'bufferView': b4, 'componentType': 5125,
+                            'count': len(ii), 'type': 'SCALAR'})
         aa4 = len(B.accessors) - 1
         B.gltf_meshes.append({'primitives': [{'attributes': {'POSITION': aa1, 'NORMAL': aa2,
                                                               'TEXCOORD_0': aa3},
                                               'indices': aa4, 'material': mat_idx, 'mode': 4}],
                               'name': name or key})
-        bone = BONE_OF_CHILD.get(top_idx)
-        # 官方 _0x54c179: object.matrix = YT.update()返回的 world[bone] × local。
-        # YT.update 返回的是 world 数组(非 skin) => glTF 子节点局部矩阵 = 纯 m_walked
-        node = {'mesh': len(B.gltf_meshes) - 1, 'name': name or key,
-                'matrix': mat4_to_gltf(m)}
+        return len(B.gltf_meshes) - 1
+
+    def emit_tree(rec, parent_abs_m):
+        node = {'name': rec['name'] or 'node',
+                'matrix': mat4_to_gltf(np.linalg.inv(parent_abs_m) @ rec['matrix'])}
+        if rec.get('geo') is not None:
+            node['mesh'] = emit_rigid_mesh(rec['geo'], rec['name'], rec['top'])
         B.gltf_nodes.append(node)
+        idx = len(B.gltf_nodes) - 1
+        for c in rec['children']:
+            ci = emit_tree(c, rec['matrix'])
+            node['children'] = node.get('children', []) + [ci]
+        return idx
+
+    # 顶层子节点 1..5 挂对应骨骼(local = 绝对矩阵, 官方 world[bone]×local 等价)
+    for i, child in enumerate(tree['children']):
+        bone = BONE_OF_CHILD.get(i)
+        if i == 0:
+            continue  # body 蒙皮已由 skin 处理
+        ci = emit_tree(child, np.eye(4))
         parent = joint_nodes[bone] if bone is not None else scene_nodes[0]
-        B.gltf_nodes[parent]['children'] = B.gltf_nodes[parent].get('children', []) + \
-            [len(B.gltf_nodes) - 1]
+        B.gltf_nodes[parent]['children'] = B.gltf_nodes[parent].get('children', []) + [ci]
 
     # ---- 动画剪辑 ----
     animations = []

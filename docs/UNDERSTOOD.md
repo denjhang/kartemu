@@ -479,3 +479,37 @@ Z -0.22~+1.50(坐姿腿前伸 1.72)——标准 Y-up 直立坐姿, 全链公式�
   `<color id='4' base='255 58 174 25' high='255 210 255 0'>`(녹색/绿)。
   ⇒ 板车官方配色 = 绿底黄高光,不是白色!
 - kart_gltf.py 已实现该合成(复用 char_gltf.compose_body_texture)。
+
+## 23. 挂件/配件系统与完全体装配(2026-09-10)
+
+### 23.1 赛车挂件槽位(visualConfig.attachments, eu() L14019-14036)
+17 槽: [0..1]=port0/1, [2..7]=fire0..5, [8..9]=extwheel0/1, [10..11]=extsteer0/1,
+[12..15]=lamp0..3, [16]=BalloonPort(默认名 'balloon')。名字来自 param.xml
+Port0/FirePort0/... 属性;attachmentNodes = 按名字在模型树找节点。
+- **气球(o0)**: 若无 'balloon' 节点则自动创建于 wheel2/wheel3 平移中点。
+- 配件模型 = stuff.rho `balloon/<名>/balloon.1s` 等,结构:
+  rootRelement→Scene Root→具名槽位节点→ReToonRigid(tex 名在 TexProperty,
+  同目录解析,含 @zz/@cn 本地化变体)。
+
+### 23.2 人物槽位与配件
+- dao 模型 head 子树内建空槽位 Relement: goggle0/goggle1/muffler/headBand/
+  headPhone/pet;handL/handR 下有 handGearL/R —— 配件按槽位名挂接
+  (如 headPhone/headCamera01.1s = 头戴摄像机, goggle/2010고글.1s = 风镜)。
+- 头饰"整装"则走 costume/model/*.1s 全模型替换(76 套在手)。
+- char_gltf.py 现已**完整镜像元素树**(空槽位节点也导出并按 Bw 挂骨骼),
+  配件可按名挂载。
+
+### 23.3 号牌/车号(RC/$C/PC, L13909-13933)
+- 合成后贴图上的标记像素: 蓝 (0,0,255,255) = 号牌槽(整块替换 45x20 号牌图),
+  白 (0,255,255,255) = 车号(叠 number.png 数字集, primary 上色)。
+- cotton1: 1.png 上蓝色标记 y27-46 x52-96(45x20)→ 已实现号牌替换
+  (stuff2_plate.rho texture/2009@zz.png);车号需 stuff2_ 的
+  kart_/common/number.png(该包索引为空, 暂缺)。
+- 默认号牌 = 45x20 白底 'SIM'(plateBold BM 字体, 未实现文字渲染)。
+
+### 23.4 实现(tools/acc_gltf.py + web/kart.html)
+- acc_gltf.py: 配件 .1s → glTF(层级+TexProperty 贴图+@zz 回退+zup_root)。
+- s1_parse.py: 模型解析器补充 Tex/Toon/BackFace/Mtl/Wire 槽位 stamp
+  (配件模型槽位含这些属性; TexProperty 注册于函数定义后)。
+- kart.html 完全体: 车+人+摄像机+风镜+气球, 各自 checkbox;
+  挂点实测 camera→headPhone / goggle→goggle0 / balloon→后轮中点 / 人物→child[6]。

@@ -2,12 +2,13 @@
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
-<title>赛车单独渲染 - 板车(层级 + 官方轮子/转向/贴图合成)</title>
+<title>车+人完全体 - 板车 + 皮蛋 + 挂件</title>
 <style>
   html, body { margin: 0; overflow: hidden; background: #202530; }
   #ui { position: fixed; left: 12px; top: 12px; color: #fff; font: 13px/1.7 monospace;
         text-shadow: 0 1px 2px #000; user-select: none; }
   input { vertical-align: middle; }
+  label { margin-right: 10px; }
 </style>
 <script type="importmap">
 { "imports": {
@@ -20,9 +21,14 @@
 <div id="ui">
   <div id="info">加载中…</div>
   <div>转向 <input id="steer" type="range" min="-1" max="1" step="0.01" value="0">
-       <span id="steerV">0.00</span></div>
-  <div>车速 <input id="speed" type="range" min="0" max="30" step="0.5" value="8">
-       (驱动轮子自转)</div>
+       <span id="steerV">0.00</span>
+       车速 <input id="speed" type="range" min="0" max="30" step="0.5" value="8"></div>
+  <div>
+    <label><input type="checkbox" id="cb-rider" checked>人物(f45)</label>
+    <label><input type="checkbox" id="cb-camera" checked>头戴摄像机</label>
+    <label><input type="checkbox" id="cb-goggle" checked>风镜</label>
+    <label><input type="checkbox" id="cb-balloon" checked>气球</label>
+  </div>
 </div>
 <script type="module">
 import * as THREE from 'three';
@@ -38,40 +44,74 @@ const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x202530);
 const camera = new THREE.PerspectiveCamera(40, innerWidth / innerHeight, 0.05, 100);
 const controls = new OrbitControls(camera, renderer.domElement);
-window.__cam = camera; window.__controls = controls;
+window.__cam = camera; window.__controls = controls; window.__scene = scene;
 
 scene.add(new THREE.HemisphereLight(0xffffff, 0x445566, 2.0));
-const grid = new THREE.GridHelper(8, 32, 0x556, 0x334);
-scene.add(grid);
+scene.add(new THREE.GridHelper(8, 32, 0x556, 0x334));
 
-// 官方 §22 轮子语义(数据空间):
-//   hd(a) = RotX(a)(自转)   i1(a) = RotZ(a)(转向)
-//   前轮 basis = i1(-steer*-3) · hd(mainAngle); Ra(handle, 同转向)
-//   轮子平移 z = wheelCompression(0)
 const rotX = a => new THREE.Matrix4().makeRotationX(a);
 const rotZ = a => new THREE.Matrix4().makeRotationZ(a);
 
-let kartRoot = null, handleChild = null, wheelChildren = [], mainAngle = 0;
-let mixer = null, riderNode = null;
+let kartRoot, rekart, handleChild, wheelChildren = [], mainAngle = 0;
+let mixer = null;
+const parts = {};
+window.__parts = parts;
 
-new GLTFLoader().loadAsync('kart/kart.gltf').then((kart) => {
+function innerRoot(g) { return g.scene.getObjectByName('zup_root').children[0]; }
+function findByName(root, name) {
+  let hit = null;
+  root.traverse(o => { if (!hit && o.name === name) hit = o; });
+  return hit;
+}
+
+Promise.all([
+  new GLTFLoader().loadAsync('kart/kart.gltf'),
+  new GLTFLoader().loadAsync('character/dao.gltf'),
+  new GLTFLoader().loadAsync('acc/headcamera.gltf'),
+  new GLTFLoader().loadAsync('acc/goggle.gltf'),
+  new GLTFLoader().loadAsync('acc/balloon.gltf'),
+]).then(([kart, dao, cam, gog, bal]) => {
+  [kart, dao, cam, gog, bal].forEach(g =>
+    g.scene.traverse(o => { if (o.isMesh) o.frustumCulled = false; }));
   scene.add(kart.scene);
   kartRoot = kart.scene;
-  kart.scene.traverse(o => { if (o.isMesh) o.frustumCulled = false; });
-
-  // 定位官方语义节点: ReKart 根(zup_root 下), children[1]=handle, [2..5]=wheel0..3
-  const rekart = kart.scene.getObjectByName('ReKart');
+  rekart = kart.scene.getObjectByName('ReKart');
   const kids = rekart.children;
   handleChild = kids[1].children[0];
   wheelChildren = [2, 3, 4, 5].map(i => kids[i].children[0]);
 
+  const charRoot = dao.scene.getObjectByName('char_root');
+  kids[6].add(charRoot);
+  mixer = new THREE.AnimationMixer(charRoot);
+  const f45 = dao.animations.find(a => a.name === 'f45');
+  if (f45) mixer.clipAction(f45).play();
+  parts.rider = charRoot;
+
+  const hp = findByName(charRoot, 'headPhone');
+  if (hp) { const c = innerRoot(cam); hp.add(c); parts.camera = c; }
+  const g0 = findByName(charRoot, 'goggle0');
+  if (g0) { const gnode = innerRoot(gog); g0.add(gnode); parts.goggle = gnode; }
+
+  const w2 = kids[4], w3 = kids[5];
+  const t2 = new THREE.Vector3().setFromMatrixPosition(w2.matrix);
+  const t3 = new THREE.Vector3().setFromMatrixPosition(w3.matrix);
+  const balloonNode = new THREE.Group();
+  balloonNode.name = 'balloon';
+  balloonNode.matrix.makeTranslation((t2.x + t3.x) / 2, (t2.y + t3.y) / 2, (t2.z + t3.z) / 2);
+  balloonNode.matrixAutoUpdate = false;
+  balloonNode.matrixWorldNeedsUpdate = true;
+  rekart.add(balloonNode);
+  const bnode = innerRoot(bal);
+  balloonNode.add(bnode);
+  parts.balloon = bnode;
+
   const box = new THREE.Box3().setFromObject(kart.scene);
   const ctr = box.getCenter(new THREE.Vector3());
   controls.target.copy(ctr);
-  camera.position.set(ctr.x + 2.2, ctr.y + 1.5, ctr.z + 3.2);
+  camera.position.set(ctr.x + 2.4, ctr.y + 1.6, ctr.z + 3.4);
   controls.update();
   document.getElementById('info').textContent =
-    `板车加载成功 · 官方贴图合成(绿涂装) · 轮子自转/转向就绪`;
+    '完全体就绪: 板车(绿漆+号牌) + 皮蛋(f45) + 头戴摄像机 + 风镜 + 气球';
 }).catch(e => {
   document.getElementById('info').textContent = '加载失败: ' + e.message;
   console.error(e);
@@ -81,32 +121,31 @@ const steerEl = document.getElementById('steer');
 const speedEl = document.getElementById('speed');
 steerEl.oninput = () => document.getElementById('steerV').textContent =
   (+steerEl.value).toFixed(2);
+for (const [id, key] of [['cb-rider', 'rider'], ['cb-camera', 'camera'],
+                          ['cb-goggle', 'goggle'], ['cb-balloon', 'balloon']]) {
+  document.getElementById(id).onchange = e => {
+    if (parts[key]) parts[key].visible = e.target.checked;
+  };
+}
 
-// 记录轮子初始局部矩阵(官方 ca 结果), 运行时只替换旋转分量
 const baseMats = new Map();
 const clock = new THREE.Clock();
 renderer.setAnimationLoop(() => {
   const dt = clock.getDelta();
   if (mixer) mixer.update(dt);
   if (kartRoot) {
-    // 官方 advanceAngles: mainAngle += dt * 车速(视觉近似, 常数因子)
     mainAngle = (mainAngle + dt * (+speedEl.value)) % (Math.PI * 2);
-    // 官方: steerVisual = steering * -3; 转动矩阵 = i1(-steerVisual)
     const steerRot = rotZ((+steerEl.value) * 3);
-    if (handleChild) {
-      if (!baseMats.has(handleChild)) baseMats.set(handleChild, handleChild.matrix.clone());
-      handleChild.matrix.copy(steerRot).multiply(baseMats.get(handleChild));
-      handleChild.matrixAutoUpdate = false;
-      handleChild.matrixWorldNeedsUpdate = true;
-    }
+    const apply = (o, rot) => {
+      if (!baseMats.has(o)) baseMats.set(o, o.matrix.clone());
+      o.matrix.copy(rot).multiply(baseMats.get(o));
+      o.matrixAutoUpdate = false;
+      o.matrixWorldNeedsUpdate = true;
+    };
+    if (handleChild) apply(handleChild, steerRot);
+    const spin = rotX(mainAngle);
     wheelChildren.forEach((w, i) => {
-      if (!w) return;
-      if (!baseMats.has(w)) baseMats.set(w, w.matrix.clone());
-      const spin = rotX(mainAngle);
-      const rot = (i < 2) ? steerRot.clone().multiply(spin) : spin; // 前轮: 转向∘自转
-      w.matrix.copy(rot).multiply(baseMats.get(w));
-      w.matrixAutoUpdate = false;
-      w.matrixWorldNeedsUpdate = true;
+      if (w) apply(w, (i < 2) ? steerRot.clone().multiply(spin) : spin);
     });
   }
   controls.update();

@@ -38,6 +38,25 @@ def node_matrix(n):
 # itemTable.kml: <kart id='11' name='cotton1' orgColorId='4'> → color id=4 녹색
 COTTON1_PRIMARY = (58, 174, 25)
 COTTON1_HIGH = (210, 255, 0)
+PLATE_PATH = 'unpacked/stuff2_plate/texture/2009@zz.png'
+
+
+def overlay_plate(comp_path, plate_path):
+    """官方 RC/$C: 合成图上蓝色标记像素 (0,0,255,255) = 号牌槽, 整块替换为 45x20 号牌"""
+    from PIL import Image
+    import numpy as np
+    im = Image.open(comp_path).convert('RGBA')
+    a = np.array(im)
+    blue = np.all(np.stack([a[..., 0] == 0, a[..., 1] == 0, a[..., 2] == 255,
+                            a[..., 3] == 255]), axis=0)
+    if not blue.any() or not plate_path:
+        return False
+    ys, xs = np.where(blue)
+    plate = Image.open(plate_path).convert('RGBA').resize((45, 20))
+    pa = np.array(plate)
+    a[ys.min():ys.min() + 20, xs.min():xs.min() + 45] = pa
+    Image.fromarray(a).save(comp_path)
+    return True
 
 
 def convert(src_path, out_dir, base):
@@ -66,6 +85,8 @@ def convert(src_path, out_dir, base):
         compose_body_texture(src_tex, t1 if os.path.exists(t1) else None,
                              COTTON1_PRIMARY, COTTON1_HIGH,
                              os.path.join(tex_dir, '0.png'))
+        if os.path.exists(PLATE_PATH):
+            overlay_plate(os.path.join(tex_dir, '0.png'), PLATE_PATH)
         B.images.append({'uri': base + '_textures/0.png'})
         B.gltf_textures.append({'source': 0})
         mat = {'name': 'kart', 'doubleSided': True,
