@@ -397,3 +397,31 @@ Z -0.22~+1.50(坐姿腿前伸 1.72)——标准 Y-up 直立坐姿, 全链公式�
 - `compose_body_texture()`(char_gltf.py)按 §20.6 算法离线合成:
   body=0.png, high=1.png, dye6 primary=(19,121,219) high=(0,252,255),
   输出不透明 0_body.png 替换材质贴图。实测:皮蛋蓝身+白高光/手套/鞋,与官方一致。
+
+## 21. KartRider-Tools v1.2.2 逆向(2026-09-10, PyInstaller 解包)
+
+### 21.1 解包
+- `KartRider-Tools.exe`(136MB)= **PyInstaller + Python 3.13**(cookie 尾部
+  `MEI\014\013\012\013\016` + python313.dll)。CArchive TOC 条目为**大端**
+  `[elen(u32)][pos(u32)][dlen(u32)][ulen(u32)][cflag(u8)][type(c1)][name]`,
+  且**步长 = elen(不含 4 字节长度域)**——与常见 pyinstxtractor 假设不同。
+- 解出 301 项 → `reference/kt_extract/`;PYZ.pyz(5.6MB,580 模块)→
+  `reference/kt_pyz/`。核心库 `karttools.*`(marshal,3.13 字节码),
+  代码树+常量 dump 见 `reference/kt_karttools_dump.txt`。
+- 附带 `KartRiderTools.pypv` 是 Cinema 4D SEA 加密容器,非明文。
+- rho 解密不在 Python 内,由外部 `RhoLoader.exe`(.NET/WPF)完成,
+  输出目录约定 `_rhoOut`/`_rho5Out`(rho5 的目录名会加尾下划线,如 `kart_`)。
+
+### 21.2 与本项目逆向结论的交叉验证
+- `parsers/animation.py`:fXX.1s = 6B magic + 6B pad + u32 start + u32 end +
+  N×KartObject(PRSTontroller),每骨骼一条 —— 与 §18.2 一致。
+- `parsers/model.py`:kart 与 character 的 mesh/dummy 节点头**布局不同**
+  (同为 138B/130B 但字段语义不同)——与 s1_parse 两套解析器对应。
+  Bone 数据结构 = (index, parent, inv_bind_matrix, local_matrix),
+  SkinWeight = 双骨骼 indices/weights —— 与 §18.3/§20.3 一致。
+- `parsers/kart_params.py`:param.xml 根 `<BodyParam>` CamelCase 属性
+  (ForwardAccelForce/DragFactor/SteerConstraint/Port0/FirePort0...)。
+  与 DataPack2 kartspec/param 对应,可作为克隆物理参数第二来源。
+- 该工具自身参考了 `_REF/KartRider_Importer V2.1/Import_Kart.py`
+  (3ds Max 导入器)——社区已有成熟格式知识链。
+- 结论:其对 .1s 的理解与本项目独立逆向一致,可作交叉验证;无新密码学内容。
