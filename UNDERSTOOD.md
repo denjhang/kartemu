@@ -188,3 +188,25 @@
 | kartrider.api.net / open-api-docs / game-analysis | Nexon API(战绩查询)与其数据分析 | ⭐ 与离线克隆无关 |
 
 结论:model_1s_to_obj 与 KartSpec 立即有用(已用于交叉验证);协议类项目留作道具/多人系统阶段的参考。
+
+## 14. 渲染管线修正落地(2026-09-10 第二轮)
+
+导出器已按官方语义修正并验证:
+1. **UV 不翻转**:官方 B0() 对 PNG/DDS 一律 flipY=false 且 v 原样传入;glTF 同为左上原点。
+   此前的 1.0-v 翻转是"贴图放飞自我"的根因之一(kartrider_model_1s_to_obj 的 1-v 是为 OBJ 左下原点,反证了我们最初的错误)。
+2. **ReTriStrip 奇偶展开**(官方 HS()):偶数步 (a,b,c),奇数步 (b,a,c),跳过退化三角形。
+3. **BackFace cull → side**(官方 Wb()):cull 1=DoubleSide、2=FrontSide(默认,继承链初始值 2)、3=BackSide;
+   世界矩阵 det<0 时翻面(官方 createTrackMesh 传 determinant()<0 作为 flip 标志)。
+4. **顶点色**:vertexData.diffuseColors u32 → COLOR_0(官方 qS(): r=(>>>16), g=(>>>8), b, a=(>>>24)),
+   basic stage 中 texel*vPrimary 调制。
+5. **alphaTest 只认 AlphaProperty**(blendEnable/alphaTestEnable/compare/alphaRef;
+   alphaRef/255 → glTF alphaCutoff,实测 0x7F→0.498)。贴图 alpha 通道不一定是透明度
+   (板车 0.png 的 alpha 是涂装遮罩,误加 MASK 会把整车 discard 成隐形)。
+6. **Mtl mode 0/1 → KHR_materials_unlit**(官方 basic stage 无光照);mode 2 用 diffuse 调色。
+   注意:GLTFLoader 只为顶层 extensionsUsed 声明过的扩展实例化处理器,材质级引用必须在
+   文件级 `extensionsUsed` 声明,否则报 "Cannot read properties of undefined (reading 'getMaterialType')"。
+7. track.1s 的 AlphaProperty 走模型解析器分支输出(className 字段、无 kind),
+   slot_state 需按 `alphaTestEnable in dict` 识别(194 个实例)。
+
+效果:城镇高速公路起点段渲染与官方观感一致(树叶镂空/路灯/旗帜/广告牌/警示墩/远桥),
+赛车与人物上车可见;人物体色待调色板机制(characterColorIds)落地。

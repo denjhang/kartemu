@@ -113,31 +113,33 @@ class GltfBuilder:
         self.gltf_textures.append({'source': img_idx})
         return tex_idx
 
-    def get_material(self, tex_name, out_dir, base):
+    def get_material(self, tex_name, out_dir, base, cull=2, alpha=None, mtl=None):
         key = tex_name or '__default__'
         if key in self.material_idx:
             return self.material_idx[key]
-        mat = {'name': key, 'doubleSided': True}
+        # 官方 Wb(): D3D cull 1=NONE(双面) 2=CW(正面) 3=CCW(背面); 默认 2
+        side_map = {1: 'DOUBLE', 2: 'SINGLE', 3: 'BACK'}
+        mat = {'name': key, 'doubleSided': side_map.get(cull if cull in side_map else 2, 'SINGLE') != 'SINGLE'}
         t = self.get_texture(tex_name, out_dir, base)
-        # 镂空贴图(树叶/栅栏/广告牌)走 alphaTest, 否则整片遮挡视线
-        path = find_texture(tex_name)
-        if path is not None:
-            try:
-                im = Image.open(path)
-                if im.mode in ('RGBA', 'LA', 'PA') or 'transparency' in im.info:
-                    im = im.convert('RGBA')
-                    lo = im.getchannel('A').getextrema()[0]
-                    if lo < 250:
-                        mat['alphaMode'] = 'MASK'
-                        mat['alphaCutoff'] = 0.5
-            except Exception:
-                pass
+        # 官方语义: 只有 AlphaProperty.alphaTestEnable 才做 alphaTest,
+        # 贴图 alpha 通道不一定是透明度(可能是涂装/遮罩), 不可凭通道猜测
+        if alpha and alpha.get('alphaTestEnable'):
+            mat['alphaMode'] = 'MASK'
+            mat['alphaCutoff'] = round(alpha.get('alphaRef', 128) / 255.0, 4)
+        # Mtl mode 0/1 = 不受光(官方 basic stage 无光照), mode 2 = diffuse/emissive 受光
+        mode = (mtl or {}).get('mode', 0)
+        if mode in (0, 1):
+            mat['extensions'] = {'KHR_materials_unlit': {}}
+        pbr = {'metallicFactor': 0.0, 'roughnessFactor': 1.0}
+        if mode == 2 and mtl:
+            d = mtl.get('diffuse', 0xFFFFFFFF)
+            pbr['baseColorFactor'] = [((d >> 16) & 255) / 255.0, ((d >> 8) & 255) / 255.0,
+                                      (d & 255) / 255.0, ((d >> 24) & 255) / 255.0]
         if t is not None:
-            mat['pbrMetallicRoughness'] = {'baseColorTexture': {'index': t},
-                                           'metallicFactor': 0.0, 'roughnessFactor': 1.0}
+            pbr['baseColorTexture'] = {'index': t}
         else:
-            mat['pbrMetallicRoughness'] = {'baseColorFactor': [0.7, 0.7, 0.7, 1.0],
-                                           'metallicFactor': 0.0, 'roughnessFactor': 1.0}
+            pbr.setdefault('baseColorFactor', [0.7, 0.7, 0.7, 1.0])
+        mat['pbrMetallicRoughness'] = pbr
         idx = len(self.materials)
         self.materials.append(mat)
         self.material_idx[key] = idx
@@ -169,7 +171,8 @@ def normal_matrix(m):
 
 
 def extract_kv(geo):
-    """刚性网格 -> 展开的 positions/normals/uvs/indices"""
+    """刚性网格 -> 展开的 positions/normals/uvs/indices
+    UV 注意: 官方 PNG/DDS 均 flipY=false 且 v 原样传入(与 glTF 左上角原点一致), 不得翻转!"""
     positions, normals, uvs, indices = [], [], [], []
     P, N, T = geo['positions'], geo['normals'], geo['texcoords']
     for f in geo['faces']:
@@ -180,29 +183,51 @@ def extract_kv(geo):
             nrm = N[tc['normalIndex']] if tc['normalIndex'] < len(N) else (0, 1, 0)
             positions.append(p)
             normals.append(nrm)
-            uvs.append((tc['u'], 1.0 - tc['v']))
+            uvs.append((tc['u'], tc['v']))
         indices.extend((start, start + 1, start + 2) if not f.get('winding')
                        else (start, start + 2, start + 1))
     return positions, normals, uvs, indices
 
 
-def extract_qv(vd):
+def expand_strip(indices):
+    """官方 HS(): ReTriStrip -> 三角形表, 奇偶交替交换前两点, 跳过退化三角形"""
+    out = []
+    for i in range(len(indices) - 2):
+        if i % 2 == 0:
+            a, b = indices[i], indices[i + 1]
+        else:
+            a, b = indices[i + 1], indices[i]
+        c = indices[i + 2]
+        if a != b and b != c and a != c:
+            out.extend((a, b, c))
+    return out
+
+
+def extract_qv(vd, is_strip=False):
+    """赛道 vertexData -> 展开顶点。官方 KS(): uv=uvs[*][0] 原样, diffuseColors 顶点色参与调制"""
     positions = vd.get('positions') or []
     normals = vd.get('normals') or []
     uvs = vd.get('uvs') or []
-    idx = vd.get('indices') or []
+    colors = vd.get('colors')
+    idx = expand_strip(vd.get('indices') or []) if is_strip else (vd.get('indices') or [])
     P = []
     N = []
     UV = []
+    C = []
     I = []
     for i in idx:
-        P.append(positions[i])
-        N.append(normals[i] if normals else (0, 1, 0))
+        P.append(positions[i] if i < len(positions) else (0, 0, 0))
+        N.append(normals[i] if normals and i < len(normals) else (0, 1, 0))
         uv = uvs[i][0] if uvs and uvs[i] else (0, 0)
-        UV.append((uv[0], 1.0 - uv[1]))
-    for t in range(0, len(idx), 3):
+        UV.append((uv[0], uv[1]))
+        if colors is not None:
+            u32 = colors[i]
+            # 官方 qS(): r=(>>>16&255), g=(>>>8&255), b=( &255), a=(>>>24&255)
+            C.append((((u32 >> 16) & 255) / 255.0, ((u32 >> 8) & 255) / 255.0,
+                      (u32 & 255) / 255.0, ((u32 >> 24) & 255) / 255.0))
+    for t in range(0, len(P), 3):
         I.extend((t, t + 1, t + 2))
-    return P, N, UV, I
+    return P, N, UV, I, (C if colors is not None else None)
 
 
 def extract_jv(geo):
@@ -217,7 +242,7 @@ def extract_jv(geo):
             v = verts[tri['position'][k]]
             P.append(v['position'])
             N.append(v.get('normal') or (0, 1, 0))
-            UV.append((w['u'], 1.0 - w['v']) if w else (0, 0))
+            UV.append((w['u'], w['v']) if w else (0, 0))
         I.extend((start, start + 1, start + 2))
     return P, N, UV, I
 
@@ -254,35 +279,43 @@ def convert(src_path, out_dir, base, model_mode=False):
             scale = n.get('scale', (1, 1, 1))
         return compose(basis, pos, scale)
 
-    def mesh_material(n):
-        # 从 slots 找纹理/材质对象
+    def slot_state(n, st):
+        """官方语义: texture/backface/alpha/material 描述符全部父->子继承"""
+        tex, cull, alpha, mtl = st
         for s in n.get('slots') or []:
             s = unwrap(s)
-            if isinstance(s, dict):
-                kind = s.get('kind')
-                if kind == 'texture':
-                    return s.get('name')
-                if kind == 'material':
-                    pass
-        # 从附加属性/property 找
-        return None
+            if not isinstance(s, dict):
+                continue
+            k = s.get('kind')
+            if k == 'texture' and s.get('name'):
+                tex = s['name']
+            elif k == 'backface':
+                cull = s.get('cull', cull)
+            elif k == 'alpha' or 'alphaTestEnable' in s:  # AlphaProperty(两种解析器字段形态)
+                alpha = s
+            elif k == 'material':
+                mtl = s
+        return (tex, cull, alpha, mtl)
 
-    def collect_mesh(n, parent_m):
+    def collect_mesh(n, parent_m, st=(None, 2, None, None)):
         kind = n.get('className') or n.get('kind')
         m = parent_m @ node_matrix(n)
-        geo = None
+        st = slot_state(n, st)
+        tex, cull, alpha, mtl = st
         if n.get('vertexData') is not None:
             vd = unwrap(n['vertexData'])
-            geo = extract_qv(vd)
-        elif n.get('geometry') is not None:
-            geo = extract_kv(unwrap(n['geometry']))
-        if geo:
-            P, N, UV, I = geo
-            tex = mesh_material(n)
+            is_strip = kind == 'ReTriStrip'
+            P, N, UV, I, C = extract_qv(vd, is_strip)
             key = tex or '__default__'
-            groups.setdefault(key, []).append((m, P, N, UV, I, n.get('name')))
+            groups.setdefault(key, []).append(
+                (m, P, N, UV, I, n.get('name'), C, cull if cull is not None else 2, alpha, mtl))
+        elif n.get('geometry') is not None:
+            P, N, UV, I = extract_kv(unwrap(n['geometry']))
+            key = tex or '__default__'
+            groups.setdefault(key, []).append(
+                (m, P, N, UV, I, n.get('name'), None, cull if cull is not None else 2, alpha, mtl))
         for c in n.get('children', []):
-            collect_mesh(unwrap(c), m)
+            collect_mesh(unwrap(c), m, st)
 
     if model_mode or v.get('className') == 'ReKart':
         # 模型模式:根是 sn 节点
@@ -294,11 +327,12 @@ def convert(src_path, out_dir, base, model_mode=False):
                 if 'vertices' in geo:  # ReToonSkinned (jv) — 按绑定姿态静态导出
                     P, N, UV, I = extract_jv(geo)
                 else:
-                    P, N, UV, I = extract_kv(geo)
+                    P, N, UV, I = extract_kv(geo)[:4]
                 # 车辆/人物模型只有一套贴图(0.png),官方 y1() 直接整体赋 baseColor map
                 key = '0' if find_texture('0') else '__default__'
-                groups.setdefault(key, []).append((m, P, N, UV, I, n.get('name')))
-            for c in n.get('children', []) or []:
+                groups.setdefault(key, []).append(
+                    (m, P, N, UV, I, n.get('name'), None, 1, None, None))
+            for c in n.get('children') or []:
                 walk_model(c, m)
         walk_model(v, np.eye(4))
     else:
@@ -325,13 +359,17 @@ def convert(src_path, out_dir, base, model_mode=False):
     # 生成 glTF
     scene_nodes = []
     for key, items in groups.items():
-        mat_idx = B.get_material(None if key == '__default__' else key, out_dir, base)
+        first = items[0]
+        mat_idx = B.get_material(None if key == '__default__' else key, out_dir, base,
+                                 cull=first[7], alpha=first[8], mtl=first[9])
         pos_arr = []
         nrm_arr = []
         uv_arr = []
+        col_arr = []
         idx_arr = []
-        for (m, P, N, UV, I, name) in items:
+        for (m, P, N, UV, I, name, C, cull, alpha, mtl) in items:
             nm = normal_matrix(m)
+            mirrored = np.linalg.det(m[:3, :3]) < 0  # 官方: det<0 时翻面(Wb 的 flip 标志)
             base_i = len(pos_arr)
             for p in P:
                 w = m @ np.array([p[0], p[1], p[2], 1.0])
@@ -342,8 +380,15 @@ def convert(src_path, out_dir, base, model_mode=False):
                 nrm_arr.append((t / ln) if ln > 1e-9 else (0, 1, 0))
             for uv in UV:
                 uv_arr.append(uv)
-            for i in I:
-                idx_arr.append(base_i + i)
+            if C is not None:
+                col_arr.extend(C)
+            if mirrored:
+                # 官方 Wb(): det<0 翻面 → 每三角交换后两点
+                for t in range(0, len(I), 3):
+                    idx_arr.extend((base_i + I[t], base_i + I[t + 2], base_i + I[t + 1]))
+            else:
+                for i in I:
+                    idx_arr.append(base_i + i)
         mesh = {'primitives': [{'attributes': {'POSITION': 0, 'NORMAL': 1, 'TEXCOORD_0': 2},
                                 'indices': 3, 'material': mat_idx, 'mode': 4}]}
         # 一个 mesh 一个 primitive,accessors 独立
@@ -365,7 +410,14 @@ def convert(src_path, out_dir, base, model_mode=False):
         acc_i = {'bufferView': bv_i, 'componentType': 5125, 'count': len(idx_arr), 'type': 'SCALAR'}
         B.accessors.append(acc_i)
         a_i = len(B.accessors) - 1
-        mesh['primitives'][0]['attributes'] = {'POSITION': a_p, 'NORMAL': a_n, 'TEXCOORD_0': a_u}
+        attrs = {'POSITION': a_p, 'NORMAL': a_n, 'TEXCOORD_0': a_u}
+        if col_arr:
+            Cdata = np.array(col_arr, dtype='<f4')
+            bv_c = B.add_bv(Cdata.tobytes(), 34962)
+            B.accessors.append({'bufferView': bv_c, 'componentType': 5126,
+                                'count': len(col_arr), 'type': 'VEC4'})
+            attrs['COLOR_0'] = len(B.accessors) - 1
+        mesh['primitives'][0]['attributes'] = attrs
         mesh['primitives'][0]['indices'] = a_i
         B.gltf_meshes.append(mesh)
         node = {'mesh': len(B.gltf_meshes) - 1, 'name': key}
@@ -378,6 +430,8 @@ def convert(src_path, out_dir, base, model_mode=False):
     root_idx = len(B.gltf_nodes) - 1
     gltf = {
         'asset': {'version': '2.0', 'generator': 'kartemu s1_gltf'},
+        # GLTFLoader 只为 extensionsUsed 声明过的扩展实例化处理器, 材质级使用必须在此声明
+        'extensionsUsed': ['KHR_materials_unlit'],
         'scene': 0,
         'scenes': [{'nodes': [root_idx]}],
         'nodes': B.gltf_nodes,
