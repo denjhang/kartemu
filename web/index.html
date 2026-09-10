@@ -92,14 +92,13 @@ const kartPivot = new THREE.Group();
 kartPivot.add(kart);
 scene.add(kartPivot);
 
-// ---- 载入皮蛋(绑定姿态,坐在车上) ----
+// ---- 载入皮蛋(官方: 人物 Y-up, 挂在 ReKart child[6] 挂点, 不需额外旋转) ----
 let rider = null;
 try {
   const daoGltf = await loader.loadAsync('character/dao.gltf');
   rider = new THREE.Group();
   rider.add(daoGltf.scene);
-  rider.scale.setScalar(1.0);
-  rider.position.set(0, 0.45, 0.1); // 座位粗调,后续对接官方 attachment 槽位
+  rider.position.set(0, 0.349, 0.067); // 官方 cotton1 根 child[6] 挂点(呈现系坐标)
   kartPivot.add(rider);
 } catch (e) { console.warn('人物载入失败', e); }
 

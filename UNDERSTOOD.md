@@ -285,3 +285,44 @@ modelMount.scale = visualScale (压扁/拉伸特效)
    用骨骼矩阵驱动蒙皮(或先静态取 f45 骑乘帧的姿态矩阵烘焙)。
 4. 车轮: 前轮(wheel0/1)按转向角转 Y, 四轮按行驶距离转 X(转速/半径)。
 5. 身体贴图合成(可选): 按 Dw 算法用 primaryColor/highColor 上色 0.png。
+
+## 18. 人物渲染管线完整逆向(已数值验证, 2026-09-10)
+
+### 18.1 绑定姿态 ≠ 渲染姿态
+dao model.1s 的绑定姿态是"横躺"的(骨架局部上轴=+X), 官方从不渲染绑定姿态——
+每帧必播 CharSequence 动画(f00 待机/f45 驾驶...), 由动画把骨架摆正。
+⇒ 静态导出绑定姿态必然"躺平", 这就是人物渲染 Bug 的本质。
+
+### 18.2 CharSequence(fXX.1s) 结构(类 CharSequence, stamp 0x1dbb04b7)
+- header[3] = {cachedMin, cachedMax, spanMs}(f45: 0/333/334, 循环 334ms)
+- **channels[24]**: 每骨骼一个 PRSTontroller(position 曲线 + rotation 曲线)
+  - position = vec3 keyType1 fixed: 记录 16B = time u32 + xyz f32×3
+  - rotation = rotation keyType1 fixed: 记录 20B = time u32 + **(w,x,y,z) f32×4**
+    (官方 R1: value=[f8,f12,f16,f4], 即文件首 float 是 w!)
+  - 采样 = 线性插值(R1 对四元数 nlerp)
+- rootChannel = IntTontroller(脸部状态机索引); map[] = 状态映射表
+- C1() 校验: 必须 24 通道 + rootChannel 为 IntTontroller
+
+### 18.3 骨骼矩阵合成(官方 Sr/mm)
+```
+pose[i]  = w0(quat_i, trans_i)        # 4x4, 列向量约定, 行主 3x4 存储
+world[0] = pose[0]
+world[i] = world[parent[i]] × pose[i] # mm(): 标准 A×B
+skin[i]  = world[i] × inverseBind[i]  # inverseBind 3x4 行主来自 model.1s bones
+v'       = w0·skin[bone0]·v + (1-w0)·skin[bone1]·v   # fm(), bone1=255 表示无第二骨骼
+```
+- 骨骼层级(model.1s bones[].parentIndex): 0=骨盆, 1-5=脊柱→头, 6-10/11-15=左右臂,
+  16-19/20-23=左右腿; 刚性附件(脸→bone5, 手→bone9/14)直接复制 world 矩阵×local。
+
+### 18.4 数值验证(pose_eval.py)
+f45.1s @100ms 求值 + 蒙皮 → 顶点云 X ±0.80(左右) / Y -0.59~+0.80(直立身高 1.39) /
+Z -0.22~+1.50(坐姿腿前伸 1.72)——标准 Y-up 直立坐姿, 全链公式正确。
+
+### 18.5 人物正确渲染的实施清单
+1. 导出器 --character: 蒙皮顶点用 skin[] 烘焙(取 f45 任意帧或全骨骼静态姿态),
+   刚性件(face/head/hand)按对应 world 矩阵烘焙; 根节点不加旋转(已改)。
+2. 挂点: kart 根 child[6] 呈现系坐标 (0, 0.349, 0.067)(已接)。
+3. 身体贴图: 0.png 为调色板占位, 官方加载时按 primaryColor/highColor 合成(Fw/Dw),
+   需复刻该合成或先用整片 dye 色近似(当前做法)。
+4. 脸部: fXX.png + overlay 合成(sC), 状态由 rootChannel IntTontroller 驱动。
+5. 动画循环(可选): 逐帧求值 f45 的 334ms 循环即可获得驾驶摆动。
