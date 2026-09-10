@@ -29,10 +29,17 @@
     <label><input type="checkbox" id="cb-goggle" checked>风镜</label>
     <label><input type="checkbox" id="cb-balloon" checked>气球</label>
     <label>人物动作 <select id="anim-sel">
-      <option value="f00" selected>f00 正常(待机)</option>
+      <option value="auto" selected>自动(随驾驶状态)</option>
+      <option value="f00">f00 正常(待机)</option>
       <option value="f46">f46 驾驶</option>
-      <option value="f45">f45 骑上</option>
+      <option value="f40">f40 漂移</option>
+      <option value="f41">f41 左转摇头</option>
+      <option value="f42">f42 右转摇头</option>
+      <option value="f47">f47 碰撞</option>
+      <option value="f50">f50 倒车看后</option>
+      <option value="f11">f11 喷火后仰</option>
     </select></label>
+  <div style="color:#9ab">↑↓ 油门/倒车 · ←→ 转向 · Ctrl 喷火(N2O)</div>
   </div>
 </div>
 <script type="module">
@@ -56,6 +63,12 @@ scene.add(new THREE.GridHelper(8, 32, 0x556, 0x334));
 
 const rotX = a => new THREE.Matrix4().makeRotationX(a);
 const rotZ = a => new THREE.Matrix4().makeRotationZ(a);
+
+// ---- 键盘驾驶(官方状态机语义: L2882/f0/fd) ----
+const keys = {};
+addEventListener('keydown', e => { keys[e.key] = true; if (e.key.startsWith('Arrow') || e.key === 'Control') e.preventDefault(); });
+addEventListener('keyup', e => { keys[e.key] = false; });
+const drive = { speed: 0, steer: 0, heading: 0, boost: false, crashUntil: 0, time: 0 };
 
 let kartRoot, rekart, handleChild, wheelChildren = [], mainAngle = 0;
 let mixer = null, accMixer = null, balloonT = 0, balloonNodeRef = null;
@@ -88,8 +101,10 @@ Promise.all([
   const charRoot = dao.scene.getObjectByName('char_root');
   kids[6].add(charRoot);
   mixer = new THREE.AnimationMixer(charRoot);
-  let curAction = null;
-  window.__setCharAnim = (name) => {
+  let curAction = null, curName = '';
+  window.__setCharAnim = (name, soft) => {
+    if (soft && name === curName) return;   // 状态未变不重启
+    curName = name;
     if (curAction) curAction.stop();
     const clip = dao.animations.find(a => a.name === name);
     if (clip) { curAction = mixer.clipAction(clip); curAction.reset().play(); }
@@ -122,6 +137,30 @@ Promise.all([
   balloonT = 0;
   parts.balloon = balloonNode;
 
+  // 喷火(fire0 排气口: 车尾), 官方 booster 语义: 加速期火焰持续
+  const flames = [];
+  for (const fx of [-0.28, 0.28]) {
+    const flame = new THREE.Mesh(
+      new THREE.ConeGeometry(0.07, 0.5, 8, 1, true),
+      new THREE.MeshBasicMaterial({ color: 0xff8822, transparent: true,
+        opacity: 0.85, blending: THREE.AdditiveBlending, depthWrite: false,
+        side: THREE.DoubleSide }));
+    flame.rotation.x = Math.PI / 2;          // 沿 -Y(车尾)喷射
+    flame.position.set(fx, -0.95, 0.35);     // 数据空间: 车尾 y<0
+    flame.visible = false;
+    rekart.add(flame);
+    flames.push(flame);
+  }
+  // 障碍柱(碰撞测试)
+  const obstacles = [];
+  const obsMat = new THREE.MeshNormalMaterial();
+  for (const [ox, oz] of [[6, 4], [-5, 6], [3, -6], [-7, -3]]) {
+    const post = new THREE.Mesh(new THREE.CylinderGeometry(0.4, 0.4, 1.6, 10), obsMat);
+    post.position.set(ox, 0.8, oz);
+    scene.add(post);
+    obstacles.push(post);
+  }
+
   const box = new THREE.Box3().setFromObject(kart.scene);
   const ctr = box.getCenter(new THREE.Vector3());
   controls.target.copy(ctr);
@@ -139,7 +178,10 @@ const speedEl = document.getElementById('speed');
 steerEl.oninput = () => document.getElementById('steerV').textContent =
   (+steerEl.value).toFixed(2);
 const animSel = document.getElementById('anim-sel');
-animSel.onchange = () => window.__setCharAnim && window.__setCharAnim(animSel.value);
+animSel.onchange = () => {
+  if (animSel.value !== 'auto')
+    window.__setCharAnim && window.__setCharAnim(animSel.value);
+};
 for (const [id, key] of [['cb-rider', 'rider'], ['cb-camera', 'camera'],
                           ['cb-goggle', 'goggle'], ['cb-balloon', 'balloon']]) {
   document.getElementById(id).onchange = e => {
@@ -152,6 +194,56 @@ const clock = new THREE.Clock();
 renderer.setAnimationLoop(() => {
   const dt = clock.getDelta();
   if (mixer) mixer.update(dt);
+  // ---- 驾驶更新 ----
+  drive.time += dt;
+  const accel = 6, maxSpeed = 9, boostMax = 20, steerRate = 3;
+  const up = keys['ArrowUp'] || keys['w'], down = keys['ArrowDown'] || keys['s'];
+  const left = keys['ArrowLeft'] || keys['a'], right = keys['ArrowRight'] || keys['d'];
+  drive.boost = !!keys['Control'] && drive.speed > 0.5;
+  const cap = drive.boost ? boostMax : maxSpeed;
+  if (up) drive.speed = Math.min(drive.speed + accel * dt, cap);
+  else if (down) drive.speed = Math.max(drive.speed - accel * 0.7 * dt, -4);
+  else drive.speed *= (1 - 1.2 * dt);
+  const steerTarget = left ? 1 : right ? -1 : 0;
+  drive.steer += (steerTarget - drive.steer) * Math.min(1, 8 * dt);
+  if (Math.abs(drive.speed) > 0.1)
+    drive.heading += drive.steer * steerRate * dt * Math.sign(drive.speed) *
+      Math.min(1, Math.abs(drive.speed) / 4) * (drive.speed > 0 ? 1 : -1);
+  // 车移动(数据空间 z-up -> 用一个地面 Group 载具: kart 已在 zup_root 下, 直接动 kartRoot)
+  if (kartRoot && Math.abs(drive.speed) > 0.02) {
+    // zup_root 内 +Y 是车头; 世界(呈现)移动沿 heading
+    kartRoot.position.x += Math.sin(drive.heading) * drive.speed * dt;
+    kartRoot.position.z += Math.cos(drive.heading) * drive.speed * dt;
+    kartRoot.rotation.y = drive.heading;
+  }
+  // 碰撞检测(障碍柱, 距离 <1.1)
+  if (kartRoot) for (const ob of obstacles) {
+    const dx = kartRoot.position.x - ob.position.x;
+    const dz = kartRoot.position.z - ob.position.z;
+    if (dx * dx + dz * dz < 1.2 && Math.abs(drive.speed) > 2) {
+      drive.crashUntil = drive.time + 1.0;      // 官方: 强碰撞 f47 锁 1s
+      drive.speed = -drive.speed * 0.3;
+      kartRoot.position.x += dx * 0.3; kartRoot.position.z += dz * 0.3;
+    }
+  }
+  // ---- 官方状态机(f0/fd/T1 语义) ----
+  if (animSel.value === 'auto') {
+    let st;
+    if (drive.time < drive.crashUntil) st = 'f47';            // 0xa 强碰撞
+    else if (drive.boost) st = 'f11';                          // 0x12 喷火后仰
+    else if (Math.abs(drive.speed) < 0.3) st = 'f00';          // 0x0 待机
+    else if (drive.speed < -0.3) st = 'f50';                   // 倒车: 扭头看后
+    else if (drive.steer > 0.3) st = 'f41';                    // 左转摇头
+    else if (drive.steer < -0.3) st = 'f42';                   // 右转摇头
+    else st = 'f46';                                           // 直行驾驶
+    window.__setCharAnim && window.__setCharAnim(st, true);
+  }
+  // 火焰随喷火
+  const firing = drive.boost;
+  flames.forEach((f, i) => {
+    f.visible = firing;
+    if (firing) f.scale.setScalar(0.8 + 0.4 * Math.sin(drive.time * 30 + i));
+  });
   if (balloonT !== null && parts.balloon) {
     balloonT += dt;
     const bob = 0.2 * Math.sin(balloonT * Math.PI * 2 / 1.4); // 官方 1400ms 节奏
@@ -179,6 +271,10 @@ renderer.setAnimationLoop(() => {
     wheelChildren.forEach((w, i) => {
       if (w) apply(w, (i < 2) ? steerRot.clone().multiply(spin) : spin);
     });
+  }
+  // 追逐相机: 目标与机位跟随车(保持用户 orbit 相对偏移)
+  if (kartRoot && drive.speed !== 0) {
+    controls.target.lerp(new THREE.Vector3(kartRoot.position.x, 0.7, kartRoot.position.z), 0.12);
   }
   controls.update();
   renderer.render(scene, camera);

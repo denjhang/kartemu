@@ -541,3 +541,27 @@ Port0/FirePort0/... 属性;attachmentNodes = 按名字在模型树找节点。
    页面提供 f00/f46/f45 下拉切换。
 4. **页面空白事故**: 编辑时误删 for...of 的 `of` → 模块语法错误整页不执行。
    教训: 改完页面必须 `node --input-type=module --check` 过一遍再交付。
+
+## 24. 人物驾驶状态机完整语义 + 键盘驾驶(2026-09-10)
+
+### 24.1 官方状态选择(deob L2882/2919/2942 + f0/fd/T1)
+优先级从高到低:
+1. **强碰撞**(collisionStrength>30): 状态 0xa(10)=**f47**, 锁定 1s(lastStrongCollisionMs)
+2. **轻碰**(15<强度≤30)/ **落地**(landingTrigger): 0xb(11)=**f48**
+3. **加速中** m0()(instantAccel 或 boosterState 1..11/13..16): 前进=**0x12(18)=f11(后仰)**;
+   boosterState==0x12(连喷终段)且反向 → 0xe(14)=f51
+4. **变身**(visualScaleMode≠0): 0xe=f51(摩托 0x13=f54)
+5. |forwardSpeed| < Kr: **0x0=f00 待机**; 速度≈0 但有转向 → fd(): 0x3=f40 / 0x4=f41 / 0x5=f42
+6. 前进: fd(rawSteer, tireTransient, reverse) —— **tireTransient≠0(漂移)=f40**;
+   steer>0 → f41(非倒车)/f42(倒车侧); steer<0 → 反之; 直行 → 表 0x8/0x9(f45/f46)
+7. 倒车(speed<-Kr): 保持基础态(玩家手动观察, 实测 f50=扭头看后)
+- 脸部表情: os(sequence.map[state]) 由 rootChannel 整数索引驱动, 随状态换脸。
+- 状态→charAniType=1 映射表 A1: 3→25(f40) 4→26(f41) 5→27(f42) 8→30 9→31
+  10→32(f47) 11→33(f48) 12→34 13→35 14→36 19→19(f54)
+
+### 24.2 kart.html 键盘驾驶实现
+- ↑/W 油门 · ↓/S 倒车 · ←→/AD 转向 · **Ctrl 喷火(N2O)**
+- 状态机按 24.1 简化版自动切换: f47 碰撞(撞柱 1s)/f11 喷火后仰/
+  f00 待机/f50 倒车看后/f41|f42 转向摇头/f46 直行(下拉可锁手动)
+- 喷火: 车尾双锥 additive 火焰(官方 booster 语义); 场地障碍柱触发碰撞;
+  追逐相机跟随车。
