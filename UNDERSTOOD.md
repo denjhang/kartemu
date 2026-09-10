@@ -157,3 +157,19 @@
 
 > 注意:study_*.js、deob_*.js、string_table.json 为官方 bundle 的提取/反编译产物,
 > rho/贴图/模型等资源均为官方资产,按法律风险要求一律不入 git 库。
+
+## 12. 反编译产物(2026-09-10)
+
+- `deob_pretty.js`(32235 行):字符串 100% 内联后的整包格式化版,语法校验通过。
+- `deob_named.js`:在 pretty 基础上做语义重命名(628 处 vendor 导入别名 → three.js 真名,
+  867 处函数名 → 逆向确认的语义名),并剥除死掉的混淆器脚手架
+  (字符串数组 `_0x5090`、解码器 `_0x5f4c`、洗牌 IIFE、32 处死别名)。均不入库。
+- `SYMBOLS.md`(入库):1673 个顶层符号索引(行号/类型/原名/语义名)+
+  106 个类的全部方法/属性清单。
+- `rename_pass.py`(入库):重命名映射表与生成脚本(映射表本身即逆向成果)。
+- vendor-BNZ-sAvg.js(500KB)经 Node 实际加载鉴定:three.js r178 全量 +
+  P3528 运行时辅助库,78 个导出已逐一指纹识别
+  (Group/Vector3/Matrix4/Mesh/BufferGeometry/PerspectiveCamera/ShaderMaterial/
+  Box3/Quaternion/Matrix3/MD5/DXT 常量等),记录于 rename_pass.py 的 ALIAS 表。
+- 动态懒加载 chunk:`LocalTimeAttackParameters-CnGQYfTA.js`(kartspec 参数运行时),
+  未深挖,后续按需。

@@ -18,12 +18,17 @@ deob_array.js
 deob_decoder.js
 deob_iife.js
 deob_rt.js
+deob_pretty.js
+deob_named.js
 deobfuscate.py
 string_table.json
 study_*.js
 tmp_fn.txt
 rho5kit.js
 rho5kit_dbg.js
+vendor_*.json
+class_methods.json
+symbols_raw.txt
 
 # ---- 从官方客户端/资源提取的数据 ----
 kartspec.csv
