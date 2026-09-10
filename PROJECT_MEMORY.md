@@ -9,7 +9,8 @@
    UNDERSTOOD.md,禁止边猜边调。用户多次强调:"老老实实搞逆向"、"你先逆向工程,写入记忆"。
 2. **代码是唯一事实来源**:禁止打开 KartSim 游戏做视觉对比("看代码是瞎猜?")。
    不查 CDN,所有代码本地都有。
-3. **git 纪律**:kartemu 产物和官方 rho 资源绝不上传(mirror/、unpacked/、*.rho、
+3. **git 纪律**:自制工具必须全部开源入库(用户明确要求"涉及到的自制工具全部开源",
+   打包成 exe 不开源是被批评的行为);kartemu 产物和官方 rho 资源绝不上传(mirror/、unpacked/、*.rho、
    deob_*.js、web/track|kart|character/ 等,见 .gitignore);只提交自研工具/文档/代码。
    完成一个阶段就 commit 并更新文档。
 4. **禁止编造用户说过的话**。用户从未说"上下颠倒"。

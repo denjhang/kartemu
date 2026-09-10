@@ -20,7 +20,8 @@ deob_iife.js
 deob_rt.js
 deob_pretty.js
 deob_named.js
-deobfuscate.py
+*.log
+server.log
 string_table.json
 study_*.js
 tmp_fn.txt
