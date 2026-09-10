@@ -1,1 +1,0 @@
-function aa(_0x54d3d7){const _0x240177=_0x35cf12;return{'controllerBaseWord0':_0x54d3d7["uint32"](),'cycleMode':_0x54d3d7["uint32"](),'readerDiscardedWords':[_0x54d3d7["uint32"](),_0x54d3d7["uint32"]()],'frequency':_0x54d3d7["float32"](),'phase':_0x54d3d7['uint32'](),'startTimeWord':_0x54d3d7['uint32'](),'stopTimeWord':_0x54d3d7["uint32"]()};}

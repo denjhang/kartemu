@@ -1,0 +1,40 @@
+# ---- 官方资源与镜像(法律风险,不入库) ----
+mirror/
+unpacked/
+*.rho
+*.rho5
+*.rho5.part
+*.aria2
+archive-index.bin
+archive-index.json
+resources.bin
+url_list.txt
+download.log
+aria2c.exe
+
+# ---- 官方 bundle 的反编译/提取产物 ----
+deob_full.js
+deob_array.js
+deob_decoder.js
+deob_iife.js
+deob_rt.js
+deobfuscate.py
+string_table.json
+study_*.js
+tmp_fn.txt
+rho5kit.js
+rho5kit_dbg.js
+
+# ---- 从官方客户端/资源提取的数据 ----
+kartspec.csv
+
+# ---- 导出的资产(源自官方贴图/模型) ----
+web/track/
+web/kart/
+web/character/
+
+# ---- 其它 ----
+__pycache__/
+*.pyc
+404.log
+need.txt
