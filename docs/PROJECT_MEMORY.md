@@ -72,6 +72,12 @@
 6. [已完成] KartRider-Tools v1.2.2 解包(产物全在 reference/, 已被 .gitignore 覆盖: exe/kt_extract/kt_pyz/dump)(PyInstaller+Py3.13, reference/kt_extract + kt_pyz +
    kt_karttools_dump.txt):karttools.* 解析器与本项目逆向一致(§21),rho 解密在外部 RhoLoader.exe。
 
+## 目录布局(2026-09-10 起)
+
+- 自研工具全部在 `tools/`(15 个 .py);文档在 `docs/`;前端在 `web/`。
+- `tools/server.py` 的 ROOT 已改为**项目根**(相对自身上两级),从任何位置启动都行。
+- README 已匿名化且**不再包含维护备注**(代理等运维信息只记录在本文件)。
+
 ## 基础设施备注(2026-09-10)
 
 - **GitHub 推送**:`github.com:443` 直连超时,本机 `127.0.0.1:7892` 代理可用:

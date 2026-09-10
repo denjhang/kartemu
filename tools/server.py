@@ -10,7 +10,7 @@
 import os
 from http.server import HTTPServer, SimpleHTTPRequestHandler
 
-ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "mirror")
+ROOT = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "mirror")
 
 MAPPING = {
     "/__p3528/resources": os.path.join(ROOT, "..", "resources.bin"),
