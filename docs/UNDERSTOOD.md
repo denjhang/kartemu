@@ -584,3 +584,471 @@ Port0/FirePort0/... 属性;attachmentNodes = 按名字在模型树找节点。
 - **惯性(克隆近似, 官方无对应代码)**: 气球位置用欠阻尼弹簧
   (stiffness=6, damping=3.5)跟随"车后上方目标点", 目标点随车速后移
   (speed/20×0.5) → 行驶时气球拖后、转弯时甩向外侧, 绳每帧锚点→球底斜拉。
+
+### 24.5 气球空气阻力语义查证 + 克隆惯性 bug 修复(2026-09-11)
+- **官方源码查证(deob_named.js)**: 气球节点在官方**没有任何空气阻力/风/惯性代码**。
+  - `o0()` @L2244-2254: `new Group(); name='balloon'; matrix.makeTranslation(后轮中点);
+    matrixAutoUpdate=false; matrixWorldNeedsUpdate=true` —— **节点 local matrix 永不变**,
+    每帧只重新算 world(跟着父节点 ReKart root)。
+  - 玩家 kart `update()` @L25480-25490: 只写 root.position/quaternion、modelMount.scale、
+    `animation.update()`(动画状态机)、`wheelPresentation.update()`(轮/方向盘);
+    **没有任何代码每帧写入 balloon 节点的 position/quaternion**。
+  - 关键词 `wind`/`air.*resist`/`drag` 作用于气球 —— **零命中**。
+    `dragFactor` @L14107 仅车辆物理, 与气球无关。
+  - 结论: **官方气球就是静态钉在车身后轮中点的**, "受空气阻力"是用户预期,
+    非官方代码语义。`balloon_ani` 是气球本体的姿态动画(z 升起→落定, §24.4),
+    不是空气动力学。
+- **§24.4 克隆惯性的实现 bug**: 旧实现 `rekart.add(balloonNode)` 把气球挂在 kartRoot
+  子树下, target 又写在 kartRoot 局部 `(0, 1.15 - 0.5·speedK, 1.8 + ...)` ——
+  弹簧只在局部 y 方向小幅振荡, 车转弯时 kartRoot 整体旋转, 气球作为子节点同步旋转,
+  **没有任何"世界空间拖拽"视觉**。这是"气球钉死"的根因, 与官方无关(官方本就静态)。
+- **修复方案(克隆近似, 官方无对应代码)**:
+  1. 气球从 `rekart` 解耦到 `scene` 根(世界空间), 模型朝向: balloonNode 不旋转,
+     innerRoot(bal) 本身已是 Y-up 内层姿态(acc_gltf.py zup_root RotX(-90°) 已转)。
+  2. 每帧世界坐标 target:
+     - anchor_world = `rekart.localToWorld(__anchor.clone())` (后轮中点世界位置)
+     - 车头单位向量 fwd = `(sin(heading), 0, cos(heading))`
+     - 风阻反向偏移 drag = `-fwd · sign(speed) · min(|speed|·k_drag, maxDrag)`
+       (车前进时气球拖后, 倒车时拖前)
+     - 转弯甩动 swing = `right · (-dHeading · k_swing)`, right = `fwd × (0,1,0)`
+       (左转 dHeading>0 → 气球甩右)
+     - target = anchor_world + (0, height, 0) + drag + swing + (0, lift·2, 0)
+  3. 弹簧-阻尼(欠阻尼 stiffness=6, damping=3.5)跟随 target。
+  4. 绳: anchor_world → 气球世界位置(每帧重算两端)。
+
+## 25. 物理引擎完整逆向(2026-09-11)
+
+### 25.1 物理主循环(stepSubstep, L23844-L23867)
+- 子步约束: `dt ∈ (0, 0.002]` 秒, 用 `h()=Math.fround` 定点 float32。
+- motionMode: 0=标准地面, 1=rail(轨道), 2/3=full3D(飞行/MR/HW)。
+- 每子步执行序列:
+  1. `updateStateTimer(dt)` — 状态计时
+  2. `updateDriftLifecycleTimers(dt)` — 漂移生命周期
+  3. `scanSpecialRoad(ctx)` — MR/HW 特殊路面探测 (L23883)
+  4. `rebuildBodyState(force, torque)` — 清零 staged 外力,投影局部速度 (L23881)
+  5. `probeWheels(ctx, is3D)` — 4 轮射线探测 (L23914)
+  6. `applyResetSurfaceRequest()` — '리셋' 路面触发重生
+  7. (非飞行) `applySuspension` → `applyLongitudinal` → `applySteeringAndTires`
+  8. `applyRoadConsumers` — 路面消费者 (bcharge 充电带等)
+  9. `applyBoosterChargeSurface` — bcharge 路面直接加 gauge
+  10. (飞行) `applyAirState` — 空中物理
+  11. `applyDrag` — 阻力
+  12. `integrateVelocity(dt, force, torque, extra)` — 速度积分
+  13. `accumulateDriftGauge` / `accumulateSpeedGauge` — gauge 累积
+  14. `resolvePrimaryCollision` → `resolveStaticObstacles` → `resolveTrackEvents`
+  15. `applySupplementalWheelRecovery` — 未触地轮补探 (L23936)
+  16. `applySlipAlignment` — 打滑对齐
+  17. `integrateStandardOrientation(dt)` — 姿态积分
+
+### 25.2 纵向动力学(applyLongitudinal, L24125-L24167)
+- 局部投影: `localForwardSpeed = dot(velocity, forward)`, `localRightSpeed = dot(velocity, right)`
+- 前驱方向(投影到地面): `driveDir = hwContact ? -specialNormal·10 : cross(right, avgNormal)`
+- **加速**: `force = driveDir · liveForwardAccel · driveScale · forward_input`
+  - `liveForwardAccel` 来自 kartspec (ForwardAccelForce)
+  - `driveScale` 为外部输入缩放
+  - physicsState=1(起步)用 `startForwardAccelSpeed` 替代
+  - physicsState 1..11(booster)时 `boostAccelFactor` 乘子
+  - physicsState=2(漂移) `driftBoostMulAccelFactor` 额外乘
+  - physicsState=10(双喷) `dualMulAccelFactor`
+  - `instantAccelerationActive` 时 `instAccelFactor` (低速×2)
+  - `oneSubstepDrift` 时直接用 `driftEscapeForce`(漂移逃脱力)
+- **倒车**: `backwardAccel · driveScale · reverse_input`(负方向), 0.2s 累积延迟
+- **滑行制动**: `slipBrake`(侧滑)/ `gripBrake`(抓地) × 水平速度
+- **重力补偿**: forward.y>0.5 时加 90N 前推, <-0.5 时减(上下坡)
+
+### 25.3 转向与轮胎(applySteeringAndTires, L24168-L24257)
+- **转向角计算**:
+  - `rawSteer` = 输入(-1..1), `steeringInverted` 可反转
+  - `maxAngle = rad(maxSteerDeg)` (kartspec)
+  - `steeringAngle = rawSteer · maxAngle`
+  - 速度敏感衰减: `scale = exp(-(|localForwardSpeed|/steerConstraint) · steeringExponentialScale)`
+  - 最终 `steeringAngle = scale · rawSteer · maxAngle`
+  - `steeringEnvelope`: 平滑过渡(当前值→目标值取小)
+
+- **漂移判定**:
+  - `lateralRatio = localRightSpeed / speed` (侧向速度比)
+  - `angularDrift = (angularVelocity.y · Pr) / speed` (角速度/速度)
+  - 漂移触发: `|localRightSpeed| > |localForwardSpeed|·1.2` 且 `speed>15`
+  - `triggerPhase`: 漂移触发阶段, 持续 `driftTrigTime` (kartspec)
+  - `activeDrift`: 正式漂移
+  - `driftDecay`: 漂移衰减(2×triggerTimer)
+  - `tireEnvelope`: 漂移深度(0→1 渐进)
+
+- **轮胎力**:
+  - 前轮力: `F_front = G · (frontGripFactor + offset) · (steerAngle·dirSign - lateralRatio - angularDrift)`
+  - 后轮力: `F_rear = G · (rearGripFactor + offset) · (-lateralRatio + angularDrift)`
+  - 漂移时乘 `driftSlipFactor · tireEnvelope`
+  - dirt 路面: grip factor 从 `_s` 表查偏移, 额外 `_s[0]` 速度平方根衰减
+  - 正常(非漂移): `F = G·grip·(steer - lateral - angular)`, 无 slipFactor
+
+- **力矩合成**:
+  - 侧向力 = `(F_front + F_rear) · right_dir`
+  - 偏航力矩 = `Pr·F_front - Pr·F_rear` (前后轮力臂相反)
+  - 滚转力矩 = `-(F_front+F_rear)·driftLeanFactor` (车身侧倾)
+  - `cornerDrawFactor`: 非漂移转弯时的额外回正力
+
+### 25.4 N2O/加速器系统(L24371-L24394)
+- **gauge 累积**:
+  - `chargeBoostBySpeed`: 行驶时自动充能(需 `autoChargeLowSpeed` 以上 + 接地 + physicsState=0)
+  - 漂移累积: `driftGaugeWindow` 开启时 `pendingGauge` → `committedGauge`
+  - bcharge 路面: 直接 `committedGauge += 1.6`(上限 driftMaxGauge)
+  - `tachometerIncGauge`: 行驶充能标志
+- **booster 状态**:
+  - `startNormalBooster`: physicsState=3, 设 `stateRemainingMs` + `boostTime`
+  - `activateChargerIfReady` / `updateChargerExpiry`: charger 使用次数与过期
+  - boosterState 1..11/13..16 = 各种加速来源
+  - boosterState=0x12(18) = 连喷终段
+- **状态→动画映射** (L3026-L3043):
+  - boosterState≠0 → f11 后仰
+  - 连喷反向 → f51
+  - 强碰撞 → f47, 落地 → f48
+  - |speed|<Kr → f00 待机
+  - 直行 → f40, 转向 → f41/f42
+
+### 25.5 悬挂/轮子物理(probeWheels, L23914-L23935)
+- 4 轮从 body 沿 -up 射线(距离 2×di≈0.2m)
+- 每轮计算: `compression` (0..2·di), `compressionDelta`, `normals[i]`
+- `grounded`: 任意轮触地
+- `averageNormal`: 触地轮法线均值(车身姿态基准)
+- `roadDescriptor`: 路面标签(dirt/slip/bcharge/점프/리셋等)
+- `obstacleRayHit`: 障碍物命中
+- `contactRisingEdge`: 本帧新触地 → `landingMotionTrigger`
+- MR/HW 接触时射线查询模式不同(3D vs 2D)
+
+### 25.6 碰撞响应(L24505-L24535)
+- OBB 碰撞检测后:
+  - 法向速度衰减: `linearVelocity -= normal · dot(velocity, normal) · responseFactor`
+  - 高障碍物(墙面) vs 普通碰撞区分
+  - `collisionResponseMagnitudeB6C` / `collisionMotionStrength` 计算
+  - 高强度(>30)→ f47 强碰撞动画, 15-30 → f48 轻碰
+
+### 25.7 特殊路面(L23883-L23913)
+- MR(磁轨): 前向加 10N, 用多点采样(9-25 点)取平均法线
+- HW(半管): 类似 MR 但 -10N, body.up 直接设为法线
+- dirt/slip: grip factor 从 `_s` 表查偏移
+- 점프(跳跃): liveForwardAccel=6000, liveDragFactor=0.5
+- 리셋(重置): 设置 `railResetRequest` → 触发重生
+- bcharge(充电带): committedGauge 直接 +=1.6
+
+## 26. 碰撞系统完整逆向(2026-09-11)
+
+### 26.1 Z$ 碰撞网格构建(L26491-L26539)
+- 输入: 三角形数组 `{a, b, c, normal, roadDescriptor, auxiliaryDirection}`
+- 预处理: 每三角形计算 `minX/maxX/minZ/maxZ` bounds
+- **法线 y<0 时翻转绕序**: `[a, c, b]` 替换 `[a, b, c]`
+- **4m×4m 均匀网格注册**:
+  - 遍历三角形 bounds 范围, 每 4m × 4m cell 检查三角形是否与 cell AABB 相交 (`Q$` 函数)
+  - cell key = `(x>>2) + ',' + (z>>2)` (注意: y=-z 坐标变换, key 用 -z)
+  - cells = `Map<key, triangleIndex[]>`
+- **拒绝动态 roadDescriptor** (movingSurface): 静态网格不含移动物体
+
+### 26.2 rayQuery 射线查询(L26540-L26575)
+- 参数: `origin, direction, allowWall` (allowWall=false 时跳过法线 |y|<0.65 的墙面)
+- 计算 ray AABB, 遍历覆盖的 cells, 收集候选三角形(Set 去重)
+- 三角形相交测试: `Fu(triangle, origin, direction)` → 返回 fraction(t 值)
+- 选择最近命中(fraction 最小)
+- 返回: `{point, normal, fraction, roadDescriptor, auxiliaryDirection, surfaceVelocity:{0,0,0}}`
+
+### 26.3 queryObb OBB 查询(L26576-L26606)
+- 参数: OBB `{center, halfExtents, axes}`
+- 用 OBB 在 X/Z 平面的投影确定 cell 范围
+- 遍历 cells 收集候选三角形(Set 去重)
+- 三角形-OBB 相交测试: `Bu(triangle, obb)` (SAT 分离轴)
+- 返回: 命中三角形数组(每项含质心点、法线、roadDescriptor)
+
+### 26.4 多层碰撞面合并(L26098-L26103)
+- 同时查询: `movingSurface`(动态) + `surface`(静态) + `obstacleSurface`(障碍)
+- 按 `fraction`(命中距离)选择最近碰撞结果
+
+### 26.5 probeWheels 轮子探测(L23914-L23935, §25.5 已详述)
+- 未触地轮子补探(L23936): 对未命中轮子在 body 位置上方 1m 处再射, 判断是否仍被支撑
+
+### 26.6 检查点/门系统(gateTrisFromRecord, L4272-L4284)
+- 从 ToRoad record 的 `gateIndices` 取 2 组(每组 3 个 position 索引)
+- 构建正向/反向门三角形(正反方向)
+- 门三角形法线 = `frames[0].storedForward` (或反向取负)
+- `final` 标记: 最后一个 record 的 gate 用于终线
+
+### 26.7 重生系统(L23700-L23722)
+- `completeCheckpointPose`: 按 gate 帧重置 body.position/forward/up
+- 可选清零 linearVelocity / angularVelocity
+- 调用点(L29091): 从当前 section 准备 reset pose → commit route state → 重新同步 presentation
+
+## 27. 赛道构建完整逆向(2026-09-11)
+
+### 27.1 TrackContainer 解析(parseTrackContainer, L4533-L4558)
+- 读取 `TrackContainer` 对象: name + scene(Relement 根节点) + trackObjects[]
+- 校验所有 trackObjects 均为 TrackObject 类型
+- scene 子树包含所有渲染网格(ReTriList/ReTriStrip/ReToonRigid 等)
+
+### 27.2 ToRoad 路线解析(parseToRoad, L4641-L4675)
+- `cyclic`: 是否环形路线
+- `records[]`: 每条 record 包含:
+  - `name`: 路段名
+  - `positions[]`: 位置点数组(vec3)
+  - `gateIndices[]`: 检查门索引(每门 3 个 position 索引, 至少 2 门)
+  - `surface`: 表面标签
+  - `surfaceIndices[]`: 表面索引(与 frames 对应)
+  - `frames[]`: `{position, storedForward, up}` — 路线帧
+
+### 27.3 Section 图构建(buildRouteGraph, L4101-L4270)
+- 输入: trackObjects 数组(含 TrackObject "track" + ToRoad 对象)
+- 从 TrackObject "track" 的 sa 属性解析 `<course>` XML
+- `<course>` 子元素:
+  - `<road name="..." start="..." end="..." final="..." reverse="...">` — 引用 ToRoad
+  - `<branch>` — 分支, 含多个 alternative 子树
+- **section 数据结构**:
+  - `{sequenceIndex, frames[], length, surface, outgoing[], incoming[]}`
+  - outgoing/incoming = `{gate, section}` (gate 三角形 + 连接目标 section)
+- **road 展开**:
+  - start/end 指定 ToRoad records 范围
+  - reverse=true 时反向遍历 records, 帧翻转(reverseFrame)
+  - 帧全部经 `roadFrameToPhysics`(ae 变换)
+  - `routeLength(frames)` 计算总长
+- **branch 处理**:
+  - 每个 `<alternative>` 递归调用构建子 section 列表
+  - 分支入口 gate 连接到父 section, 出口连接到后续 section
+  - 第一个 alternative 的帧用于主 section
+- **闭环处理**: `_0x5a85ea=true` 时将首 section 入口连接到末 section
+
+### 27.4 起点/发车位置(L4251-L4268)
+- `start = firstSection.frames[0]` 经 `physicsToPresentation` 转换
+- `position = frame.position - forward · 0.05` (后退 5cm)
+- `up = normalize(cross(forward, (0,0,1)))` 再 `normalize(cross(right, forward))`
+- 返回: `{sections, firstSection, lastSection, start:{position, forward, up}}`
+
+### 27.5 跑圈/计时(updateRacing + updateLapTiming, L27412-L27444)
+- `currentLap` / `totalLaps` 由 coordinator 维护
+- `routeProgress > finishThreshold` 时触发 finish
+- `updateLapTiming`: 圈号变更时记录 `lapStartedAtMs`, 计算单圈时间与最佳圈
+- 最终圈: `finalLapShown` 标志 + "final-lap" 事件
+- 完赛流程: finish → switch-surround-camera → play-result-bgm → show-result → return-to-ready
+
+### 27.6 赛道表面标签
+- 从 ToRoad record.surface 读取
+- 标签种类: rail(轨道)/rain(雨)/snow(雪)/warpnext(传送)/shake(震动)/wave(波浪)/lensflare(光晕)/dirt(泥地)/slip(湿滑)/bcharge(充电)/점프(跳跃)/리셋(重置)
+- 在碰撞中被 rayQuery 返回的 `roadDescriptor` 携带
+- 物理引擎根据标签调整行为(dirt grip 降低, bcharge 充能等)
+
+## 28. AI 系统逆向(2026-09-11)
+
+### 28.1 关键发现
+- **H5 版本无 .kap 文件解析代码**: 搜索 deob_named.js 中 "kap" 无命中。
+  推测 H5 版 KartSim 仅实现 TimeAttack(计时赛)单人模式, 不含 AI 对手。
+- 无 "opponent"/"rival"/"bot"/"npc" 关键词命中。
+- **路线跟踪系统存在**但用于玩家跑圈判定, 非AI导航:
+  - `routeStates` WeakMap (L26047): 存储每辆车的路线状态 (section, lap, distance)
+  - `updateRoute` (L26248): 更新车辆在路线图中的位置
+  - `sampleRoute` (L26203): 采样未来路径点(用于迷你地图/进度条)
+  - `mB` Coordinator (L29136): 路线更新协调器
+
+### 28.2 路线状态管理(routeStates, L26047-L26336)
+- `routeStates = new WeakMap()` — 以 vehicle 实例为键
+- 每个状态: `{section, sectionDistance, lap, ...}`
+- `updateRoute(vehicle, body, routeGraph)`:
+  - 在当前 section 内投影 body.position 到 frames
+  - 超过 section 末尾时推进到 outgoing section
+  - 更新 lap 计数(过门时)
+- `resetRouteState(vehicle)`: 重置到 firstSection
+
+### 28.3 mB Coordinator(L29136)
+- `createCoordinator()` 实例化 `mB` 类
+- `run()` 方法: 每帧调用, 更新所有车辆的路线状态 + 处理路面标签
+- 不是 AI 决策器, 只是路线跟踪协调
+
+### 28.4 结论
+- H5 版 KartSim 是**纯 TimeAttack 单人计时赛**, 不含 AI 对手。
+- 若克隆需要 AI 对手, 需自行实现:
+  - 路径跟踪算法(建议 Pure Pursuit, 前瞻距离 ∝ 速度)
+  - AI 难度分级(反应延迟/精度/速度上限)
+  - 道具使用策略(如实现道具系统)
+
+## 29. 比赛流程 + UI 逆向(2026-09-11)
+
+### 29.1 GameApp 主类(L28428-L28530)
+- 构造函数初始化: renderer(WebGL), scene, camera(50° FOV/0.1-700m), hud, input, touchControls
+- 挂件系统: driveCameraman, surroundCameraman, warpNext, lightFactor, cameraShake, cameraWave
+- 比赛状态: raceLifecycle(lg), raceCameraMode="ready"
+- 资源: rhoLibrary, p3528Resources, activePhysics, activeTrack, activeCoordinator
+- 渲染挂件: activeKartEffects/Trails/DriftEffects/MotionBlur/ZetAir/ShockWave/Exhaust/Crash/Charger
+- 环境: activeRain/RainAudio/Snow/Admission/Selection
+- UI: activeGameplayUi/Action2D/Result/TimeAttackReady/Taskbar/Settings/TrackSelect/Garage/Pause
+- 音频: activeKartAudio/RaceBgm/AudioContext/InterfaceAudio/CountdownAudio
+- localStorage: timeAttackRecords(Map), timeAttackReadyOptions(speed=7/booster=0/showGhost=true)
+- 主循环: `frame` = requestAnimationFrame 回调, `updateAndRender` 计算有效时间 → 更新物理/赛道/驾驶/相机
+
+### 29.2 比赛生命周期(raceLifecycle / lg, L27347-L27459)
+- **phase 状态机**:
+  - 0: ready(初始)
+  - 1: countdown(倒计时)
+  - 2: racing(比赛中)
+  - 3: finishAccepted(完赛已确认)
+  - 4: result(结算)
+  - 5: paused(暂停)
+- **countdown 子状态**(L27392-L27411):
+  - substate 0→1: startAtMs-6000ms → "countdown-prepare"(准备)
+  - substate 1→2: startAtMs-3000ms → "countdown-number 3" + "switch-drive-camera"
+  - substate 2→3: startAtMs-2000ms → "countdown-number 2"
+  - substate 3→4: startAtMs-1000ms → "countdown-number 1"
+  - substate 4→phase 2: startAtMs+0ms → "release-race" + "countdown-go"
+- **startAtMs**: `effectiveTime + 7000ms` (7秒倒计时, 含1秒准备)
+- **startBooster 窗口**: `|time - startAtMs| ≤ 100ms` (起喷窗口)
+
+### 29.3 暂停/恢复(L27376-L27383)
+- togglePause: phase 2↔5 (racing↔paused)
+- `pausedTotalMs`: 累计暂停时长
+- `effectiveTime(rawMs)`: `rawMs - pausedTotalMs - (paused ? rawMs-pauseAnchor : 0)`
+  即暂停时冻结有效时间
+
+### 29.4 圈数计时(L27436-L27443)
+- `timedLap`: 已计时的圈数
+- 每圈完成: `lapTime = now - lapStartedAtMs`, 更新 `bestLapMs`
+- 最终圈: `currentLap == totalLaps` → "final-lap" 事件
+
+### 29.5 完赛流程(L27412-L27459)
+1. `routeProgress > finishThreshold` → finish 事件 + switch-surround-camera + play-result-bgm
+2. +3000ms → phase 3 (finishAccepted)
+3. +3000ms → phase 4, "show-result" (elapsedMs, bestMs, isNewRecord)
+4. +8000ms → "return-to-ready"
+
+### 29.6 HUD 更新(L28644-L28656)
+- 向 activeGameplayUi 传入: currentLap, totalLaps, elapsedMs, bestMs, speedSlots, boostRatio
+- speedSlots: 速度档位显示
+- boostRatio: 加速器进度条
+
+### 29.7 相机系统
+- driveCameraman (im 类, L12390): 尾随相机, countdown "3" 时切换
+- surroundCameraman (wB 类, L27481): 环绕相机, 完赛时切换
+- readyCamera: 准备阶段静态相机
+- warpNextCamera (xmlAttr$ 类): 传送带相机
+- fairyFovFactor: FOV 特效(L23267-L23303)
+- cameraShake / cameraWave: 震动/波浪效果
+
+## 30. 道具系统逆向(2026-09-11)
+
+### 30.1 关键发现
+- H5 版 KartSim **道具系统非常有限**, 仅实现 booster/charger 相关逻辑:
+  - boosterTypes: 1=普通/2=漂移/3=加速器/0xD=区域/0xE=跳跃区/0xF=交付/0x10=磁铁/0x12=播放
+  - 道具音效: `sound_/item/magnet/using.ogg` (磁铁, L25562)
+- **无传统道具**(飞弹/水炸弹/香蕉皮/蘑菇/乌云等)代码
+- **赛道道具有**: itemCube(道具箱)、obstacle(障碍)、event(事件) — L4071-L4094
+  - `onlyItemGame` 模式标志控制道具参与
+- UI 层有 itemBox 组件(L19221): 道具/物品展示窗口, 含分类 tab、搜索
+
+### 30.2 booster 特效加载(L6826-L6933)
+- 按 `boosterTypes`、`attachments`、`boosterWaveType` 解析 `effect/...` 资源
+- 挂载到 kart 根节点
+- 状态机: `dualVisual`、`exceedActive`, 按状态显示/隐藏特效
+
+### 30.3 结论
+- H5 版 KartSim 以 TimeAttack 为核心, 道具系统仅保留 booster/charger
+- 完整道具系统需自行实现(参考跑跑卡丁车经典道具设计)
+
+## 31. 输入系统逆向(2026-09-11)
+
+### 31.1 输入抽象层(n$ 类, L22630-L22708)
+- 事件: keydown/keyup(全局) + focusin(焦点切换时取消输入)
+- 状态: `keyboardActions`(Set) + `touchActions`(Set) + `transitions`(数组)
+- `keyMap`: 键码→动作映射表(可自定义)
+- `drain()`: 排空 records → 生成 transitions(去重: keyboard 优先于 touch)
+- `isKeyboardRepeat`: 用 `releasedKeys` Set 区分真释放与自动重复
+- `cancelAll()` / `cancelGameplayInput()`: 焦点丢失/暂停时清空
+- `setEnabled(bool)`: 比赛阶段控制
+
+### 31.2 触摸/移动端(u$ 类, L23000-L23117)
+- `touchCapable = navigator.maxTouchPoints > 0`
+- `usingTouch`: 基于粗指针检测 + 手动切换
+- 虚拟按键: pointerdown/pointerup/cancel/lostpointercapture
+- 多点触控: pointers Map<pointerId, action>
+- **自动前进**: `autoForward` 选项, 触屏时自动按住 Forward
+- 全屏支持: requestFullscreen / exitFullscreen
+- 暂停按钮: touch 控件内
+
+### 31.3 键码映射(L17381-L17452)
+- 默认 keyMap `an`:
+  - Forward: ArrowUp / KeyW
+  - Reverse: ArrowDown / KeyS
+  - Left: ArrowLeft / KeyA
+  - Right: ArrowRight / KeyD
+  - Drift: ShiftLeft / ShiftRight
+  - Boost: Space / ControlLeft
+  - Pause: Escape / KeyP
+- F6/F7/F8: 调试开关(路面声/音效/BGM)
+
+### 31.4 输入→物理映射
+- `rawSteer = (left ? 1 : 0) - (right ? 1 : 0)` (±1)
+  - `steeringInverted` 可反转
+  - `maxAngle = rad(maxSteerDeg)` (kartspec)
+  - 速度衰减: `exp(-(|v|/steerConstraint)·steeringExponentialScale)`
+- `forward = forwardInput ? 1 : 0`
+- `reverse = reverseInput ? 1 : 0`
+- 漂移: driftInput 触发 `delayedDriftRequest` → 下一子步 `triggerPhase`
+- boost: boostInput 触发 `instantAccelerationActive`
+
+### 31.5 输入到动画
+- 人物状态机(v1 类)基于: forwardSpeed, rawSteer, boosterState, collisionStrength
+- 转向输入 → f41(右转)/f42(左转) 头部转动
+- 倒车 → f50 扭头看后
+- 加速 → f11 后仰
+
+## 32. 音效系统逆向(2026-09-11)
+
+### 32.1 音频配置(cu, L17591-L17602)
+- `bgmEnabled` / `bgmVolume` (0-1): 背景音乐开关/音量
+- `fxEnabled` / `fxVolume` (0-1): 音效开关/音量
+- `enableRoadSound`: 路面声效
+- `boostBlur` / `dualBoostAuto`: 加速模糊/双喷自动
+- `toonLine` / `shadow`: 描边/阴影
+- `keyMap`: 按键映射
+- localStorage key: `kartrider-web:p3528:game-options-v1`
+
+### 32.2 音频管理(L17641-L17706)
+- `Qm` WeakMap: AudioContext → {options, sounds:Set, bgmTransition}
+- `Zt(context, source, group, gain)`: 注册声音源(group="bgm"/"parseTrackContainer"(fx))
+- `hu(sound)`: 根据 group 的 enabled/volume 更新 gain
+- `Pe(gainNode, volume, time)`: 设置音量(对数尺度, -10000dB→0dB)
+- `py(param, value, time)`: setValueAtTime 的对数封装
+
+### 32.3 引擎音效($u 类, L25541-L25628)
+- 资源: `sound_/parseTrackContainer/kart/engine_<type>/motor.ogg` (fallback: engine_common)
+- 加载: decodeAudioData → AudioBuffer
+- `start()`: createBufferSource + createGain, playbackRate=0.25 初始, loop=true
+- `update(ms, state)`: 每 64ms 更新
+  - `U$(state)` → {pitch, gain} 根据 physicsState/速度计算
+  - pitch = playbackRate, gain = 音量
+- 其他音效: crash.ogg / shock.ogg / drift.ogg / reset.flac
+- booster 音效: boosterStart/boosterDrift/booster/boosterZone/boosterJumpZone/boosterDelivery/boosterPlay
+- dualBooster / charger / exceed 音效
+
+### 32.4 碰撞音效(L25643-L25668)
+- `playCollision()`: 播放 crash.ogg
+- `playSteeringCollision()`: 播放 crash.ogg (转向碰撞, 音量降低)
+- `playLandingShock()`: 播放 shock.ogg (落地)
+- `playReset()`: 播放 reset.flac (重生)
+
+### 32.5 BGM 系统(ea 类, L28176-L28274)
+- 资源:
+  - `sound_/bgm/main/single.ogg`: 准备阶段
+  - `sound_/bgm/main/game_win.ogg`: 胜利
+  - `sound_/bgm/main/game_lose.ogg`: 失败
+  - `sound_/bgm/<theme>/`: 赛道主题 BGM (ogg 格式, 多首随机选)
+- `selectRace()`: 加载赛道 BGM
+- `playReady()`: 播放准备音乐
+- `playResult(isWin)`: 播放胜负音乐
+- 淡入淡出: 16 步 × 100ms, `transitionStep` 0→15, incoming/outgoing 线性交叉
+- `restart()`: 随机选一首赛道 BGM 重新播放
+
+### 32.6 倒计时音效(L28271-L28274)
+- `count_n.flac`: 数字音效(3/2/1)
+- `count_go.flac`: GO 音效
+- `lab_count.flac` / `final_lab.flac`: 最终圈音效
+
+### 32.7 路面音效
+- `road/road.bml`: 路面音效配置表(BML XML)
+- `road/<name>.flac`: 各路面音效文件
+- 按 `enableRoadSound` 开关控制
+
+### 32.8 音频生命周期(L29509-L29580)
+- 比赛开始时: 创建/复用 AudioContext → 加载赛道 BGM + 车辆音效 + 倒计时音效 + 事件音效 → `activeKartAudio.start()`
+- 暂停: `setPaused(true)` → 停止效果源
+- 恢复: `context.resume()`

@@ -65,12 +65,14 @@
 ## 待办队列
 
 1. [已完成] 人物单独渲染(char_gltf.py + character.html, §20)。
-2. 广告牌背面实心橙(cull 方向/alpha)。
-3. 碰撞重做(官方 Z$ 4m 均匀网格 rayQuery + 墙障碍)。
-4. 可选:官方 body 贴图合成(Fw/Dw,§20.6 已完整逆向算法);车辆轮子动画。
-5. 把 index.html 的骑乘人物换成新的骨骼蒙皮版(挂到赛车子树时去掉 zup_root 旋转)。
-6. [已完成] KartRider-Tools v1.2.2 解包(产物全在 reference/, 已被 .gitignore 覆盖: exe/kt_extract/kt_pyz/dump)(PyInstaller+Py3.13, reference/kt_extract + kt_pyz +
-   kt_karttools_dump.txt):karttools.* 解析器与本项目逆向一致(§21),rho 解密在外部 RhoLoader.exe。
+2. [已完成] 全方位逆向(§25-§32, 2026-09-11):物理引擎/碰撞系统/赛道构建/AI/比赛流程UI/道具/输入/音效。
+3. 广告牌背面实心橙(cull 方向/alpha)。
+4. 碰撞重做(官方 Z$ 4m 均匀网格 rayQuery + 墙障碍, §26 已逆向, 待实现)。
+5. 物理引擎实现(§25 已逆向, 待用 JS 重新实现: stepSubstep/applyLongitudinal/applySteeringAndTires)。
+6. 比赛流程实现(§29 已逆向: raceLifecycle 状态机 + HUD + 相机)。
+7. 可选:官方 body 贴图合成(Fw/Dw,§20.6 已完整逆向算法);车辆轮子动画。
+8. 把 index.html 的骑乘人物换成新的骨骼蒙皮版(挂到赛车子树时去掉 zup_root 旋转)。
+9. [已完成] KartRider-Tools v1.2.2 解包(§21)。
 
 ## 目录布局(2026-09-10 起)
 
