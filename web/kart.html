@@ -12,8 +12,8 @@
 </style>
 <script type="importmap">
 { "imports": {
-    "three": "https://cdn.jsdelivr.net/npm/three@0.178.0/build/three.module.js",
-    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.178.0/examples/jsm/"
+    "three": "./lib/three/build/three.module.js",
+    "three/addons/": "./lib/three/examples/jsm/"
 } }
 </script>
 </head>
@@ -272,7 +272,8 @@ renderer.setAnimationLoop(() => {
   // f40=直行循环, f41/f42=左转/右转pose, f43/f44=左/右倒车固定姿态
   // f45/f46=倒车向后看过渡(播完→自动切f43/f44), f47=强碰撞
   // f51=喷火后仰, f52=甩水雷, f53=被水雷攻击, f49=胜利, f50=失败
-  if (animSel.value === 'auto') {
+  // 加载保护: 模型未就绪前跳过状态机,避免 TypeError 拦断后续 renderer.render()
+  if (animSel.value === 'auto' && window.__setCharAnim) {
     let st, once = false;
     const isReverse = drive.speed < 0;
     if (drive.boost) { st = 'f51'; once = true; }
