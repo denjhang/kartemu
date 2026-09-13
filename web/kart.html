@@ -200,13 +200,11 @@ Promise.all([
     }
     action.reset().play();
     if (curAction && curAction !== action) {
-      // 补间过渡: 新动作 0.16s 淡入, 旧动作同步淡出, 消除姿态跳变
-      action.crossFadeFrom(curAction, 0.16, false);
-      if (curAction.loop === THREE.LoopOnce) {
-        // 一次性动作淡出后释放
-        const old = curAction;
-        setTimeout(() => old.stop(), 200);
-      }
+      // 补间仅用于左/右转 pose(其余硬切, 避免倒车状态机时序被 0.16s 淡入干扰)
+      if (name === 'f41' || name === 'f42')
+        action.crossFadeFrom(curAction, 0.16, false);
+      else
+        curAction.stop();
     }
     curAction = action;
   };
