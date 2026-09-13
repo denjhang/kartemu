@@ -54,9 +54,17 @@
       <option value="f10">f10 站立 2.0s</option>
       <option value="f11">f11 走路 0.67s</option>
     </select></label>
-  <div style="color:#9ab">↑↓ 油门/倒车 · ←→ 转向 · Ctrl 喷火(N2O)</div>
+  <div style="color:#9ab">↑↓ 油门/倒车 · ←→ 转向 · Ctrl 喷火(N2O) · R 回出生点</div>
   </div>
 </div>
+<script>
+// 环境守卫(file:// 直开时浏览器禁止加载模型/模块, 先于 module 检查)
+if (location.protocol === 'file:') {
+  document.getElementById('info').innerHTML =
+    '<b style="color:#f66">打开方式错误</b>: 不能直接双击打开本文件, 请在地址栏访问 ' +
+    '<b>http://localhost:8000/kart.html</b> (先运行 python web/serve.py)';
+}
+</script>
 <script type="module">
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
@@ -143,12 +151,138 @@ gridMesh.rotation.x = -Math.PI / 2;
 gridMesh.position.y = -0.01;
 scene.add(gridMesh);
 
+// ---- 测试场景装饰: 跑道/车道线/围栏/树/房屋/远山 (程序化生成) ----
+const scenery = new THREE.Group();
+scene.add(scenery);
+const lambert = c => new THREE.MeshLambertMaterial({ color: c });
+// 圆角矩形闭环路径(XZ 平面, Vector2 = (x,z))
+function loopPath(hw, hh, r) {
+  const path = new THREE.CurvePath();
+  const L = (x1, z1, x2, z2) => path.add(
+    new THREE.LineCurve(new THREE.Vector2(x1, z1), new THREE.Vector2(x2, z2)));
+  const C = (cx, cz, a0, a1) => path.add(new THREE.EllipseCurve(cx, cz, r, r, a0, a1, false));
+  L(-hw + r, -hh, hw - r, -hh); C(hw - r, -hh + r, -Math.PI / 2, 0);
+  L(hw, -hh + r, hw, hh - r);   C(hw - r, hh - r, 0, Math.PI / 2);
+  L(hw - r, hh, -hw + r, hh);   C(-hw + r, hh - r, Math.PI / 2, Math.PI);
+  L(-hw, hh - r, -hw, -hh + r); C(-hw + r, -hh + r, Math.PI, Math.PI * 1.5);
+  return path;
+}
+// 跑道(外圈 100x60, 内圈 76x36, 路宽 12)
+{
+  const shapeOf = pts => {
+    const s = new THREE.Shape();
+    s.moveTo(pts[0].x, pts[0].y);
+    for (let i = 1; i < pts.length; i++) s.lineTo(pts[i].x, pts[i].y);
+    s.closePath();
+    return s;
+  };
+  const outer = shapeOf(loopPath(50, 30, 10).getSpacedPoints(200));
+  outer.holes.push(new THREE.Path(loopPath(38, 18, 4).getSpacedPoints(200).reverse()));
+  const road = new THREE.Mesh(new THREE.ShapeGeometry(outer), lambert(0x3a3f44));
+  road.rotation.x = -Math.PI / 2;
+  scenery.add(road);
+  // 中央车道虚线
+  const dashGeo = new THREE.PlaneGeometry(0.25, 2.2);
+  dashGeo.rotateX(-Math.PI / 2);
+  const dashMat = lambert(0xffffff);
+  const cl = loopPath(44, 24, 7).getSpacedPoints(240);
+  for (let i = 0; i < cl.length; i += 2) {
+    const nxt = cl[(i + 1) % cl.length];
+    const dash = new THREE.Mesh(dashGeo, dashMat);
+    dash.position.set(cl[i].x, 0.01, cl[i].y);
+    dash.rotation.y = Math.atan2(nxt.x - cl[i].x, nxt.y - cl[i].y);
+    scenery.add(dash);
+  }
+}
+// 围栏(白色立柱 + 红色横杆), 跑道两侧
+function fence(p2d) {
+  const pts3 = p2d.getSpacedPoints(280).map(v => new THREE.Vector3(v.x, 0, v.y));
+  const rail = new THREE.Mesh(
+    new THREE.TubeGeometry(
+      new THREE.CatmullRomCurve3(pts3.filter((_, i) => i % 4 === 0), true),
+      240, 0.05, 5, true),
+    lambert(0xcc4433));
+  rail.position.y = 0.55;
+  const n = Math.floor(pts3.length / 4);
+  const posts = new THREE.InstancedMesh(
+    new THREE.CylinderGeometry(0.05, 0.05, 0.9, 6), lambert(0xf2f2f2), n);
+  const M = new THREE.Matrix4();
+  for (let i = 0; i < n; i++) {
+    M.setPosition(pts3[i * 4].x, 0.45, pts3[i * 4].z);
+    posts.setMatrixAt(i, M);
+  }
+  posts.instanceMatrix.needsUpdate = true;
+  scenery.add(rail, posts);
+}
+fence(loopPath(56.5, 36.5, 13));
+fence(loopPath(31.5, 11.5, 3));
+// 树(内场 + 外围环带, 固定种子随机)
+{
+  let seed = 7;
+  const rnd = () => (seed = seed * 16807 % 2147483647) / 2147483647;
+  const spots = [];
+  for (let i = 0; i < 120 && spots.length < 70; i++) {
+    let x, z;
+    if (rnd() < 0.25) { x = (rnd() - 0.5) * 56; z = (rnd() - 0.5) * 16; }   // 内场
+    else { const a = rnd() * Math.PI * 2, d = 62 + rnd() * 70; x = Math.cos(a) * d; z = Math.sin(a) * d; }
+    if (Math.hypot(x, z) < 8) continue;                                     // 出生地留空
+    if ([[6, 4], [-5, 6], [3, -6], [-7, -3]].some(([ox, oz]) => Math.hypot(x - ox, z - oz) < 2)) continue;
+    spots.push([x, z, 0.8 + rnd() * 0.9]);
+  }
+  const trunks = new THREE.InstancedMesh(
+    new THREE.CylinderGeometry(0.12, 0.18, 1, 6), lambert(0x8a5a33), spots.length);
+  const crowns = new THREE.InstancedMesh(
+    new THREE.ConeGeometry(0.9, 2.2, 7), lambert(0x2f8d46), spots.length);
+  const M = new THREE.Matrix4();
+  spots.forEach(([x, z, s], i) => {
+    M.makeScale(s, s, s); M.setPosition(x, 0.5 * s, z); trunks.setMatrixAt(i, M);
+    M.setPosition(x, 2.1 * s, z); crowns.setMatrixAt(i, M);
+  });
+  trunks.instanceMatrix.needsUpdate = crowns.instanceMatrix.needsUpdate = true;
+  scenery.add(trunks, crowns);
+}
+// 房屋(墙体方盒 + 四棱锥顶)
+[[62, 0, 0.3], [-62, 10, -0.4], [40, 44, 1.2], [-40, -44, -1.8],
+ [70, -25, 2.5], [-70, 25, -2.2], [10, 48, 0], [-12, -48, 3.1]].forEach(([x, z, rot], i) => {
+  const w = 3 + i % 3, d = 2.5 + i % 2, h = 1.6;
+  const body = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), lambert(i % 2 ? 0xe8ddc0 : 0xd9a066));
+  body.position.y = h / 2;
+  const roof = new THREE.Mesh(new THREE.ConeGeometry(Math.max(w, d) * 0.72, 1.1, 4), lambert(0xa04030));
+  roof.position.y = h + 0.55; roof.rotation.y = Math.PI / 4;
+  const g = new THREE.Group();
+  g.add(body, roof);
+  g.position.set(x, 0, z); g.rotation.y = rot;
+  scenery.add(g);
+});
+// 远处山脉(大锥体环)
+for (let i = 0; i < 12; i++) {
+  const a = i / 12 * Math.PI * 2 + (i % 3) * 0.12;
+  const d = 190 + (i * 37) % 90;
+  const h = 45 + (i * 23) % 45;
+  const m = new THREE.Mesh(new THREE.ConeGeometry(h * 0.9, h, 5), lambert(0x6f8560));
+  m.position.set(Math.cos(a) * d, h / 2 - 2, Math.sin(a) * d);
+  m.rotation.y = i;
+  scenery.add(m);
+}
+
 const rotX = a => new THREE.Matrix4().makeRotationX(a);
 const rotZ = a => new THREE.Matrix4().makeRotationZ(a);
 
 // ---- 键盘驾驶(官方状态机语义: L2882/f0/fd) ----
 const keys = {};
-addEventListener('keydown', e => { keys[e.key] = true; if (e.key.startsWith('Arrow') || e.key === 'Control') e.preventDefault(); });
+addEventListener('keydown', e => {
+  keys[e.key] = true;
+  if (e.key.startsWith('Arrow') || e.key === 'Control') e.preventDefault();
+  if (e.key === 'r' || e.key === 'R') {
+    if (kartRoot) {
+      kartRoot.position.set(0, kartRoot.position.y, 0);
+      kartRoot.rotation.y = 0;
+      drive.heading = 0; drive.speed = 0; drive.steer = 0;
+      window.__balloonPos && window.__balloonPos.set(0, 1.15, 1.8);
+      window.__balloonVel && window.__balloonVel.set(0, 0, 0);
+    }
+  }
+});
 addEventListener('keyup', e => { keys[e.key] = false; });
 const drive = { speed: 0, steer: 0, heading: 0, boost: false, crashUntil: 0, time: 0, reversePhase: 'none' };
 
