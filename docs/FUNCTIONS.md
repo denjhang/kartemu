@@ -7,6 +7,7 @@
 > - 源文件:`deob_named.js`(29741 行,106 类,1344 函数,3027 顶层符号)
 > - 顶层符号索引见 [SYMBOLS.md](./SYMBOLS.md)
 > - 模块级结论见 [UNDERSTOOD.md](./UNDERSTOOD.md) §25-§32
+> - **函数级详解增补见 [FUNCTIONS_DETAIL.md](./FUNCTIONS_DETAIL.md)(2026-09-13, 全 § 逐函数吃透, 含勘误, 与旧条目冲突以它为准)**
 > - 项目记忆与待办见 [PROJECT_MEMORY.md](./PROJECT_MEMORY.md)
 >
 > ## 阅读约定
@@ -16,6 +17,9 @@
 > - `h(x)` = `Math.fround` 包装的 float32 定点运算
 > - 坐标系:D=数据Z-up / P=物理Y-up(ae 变换)/ outline=描边
 > - 标注 ✅=已详述 / 📌=已索引待补 / ⏳=仅列清单
+> - **2026-09-13**: 全部 📌/⏳ 小节已在 FUNCTIONS_DETAIL.md 中补齐为 ✅(§A.5/A.6/A.8/A.10/A.14/A.15、
+>   §B.6-B.11、§C.6/C.8、§E、§F、§G、§H、§I、§J、§K、§L), 并含重要勘误(§I 旧行号作废、§E 键位表更正、
+>   §H 无 AI 实现结论修订)
 
 ---
 
@@ -25,14 +29,14 @@
 - [§B. 碰撞系统](#b-碰撞系统) ✅
 - [§C. 赛道构建](#c-赛道构建) ✅
 - [§D. 比赛流程 + UI](#d-比赛流程--ui) ✅
-- [§E. 输入系统](#e-输入系统) 📌
-- [§F. 音效系统](#f-音效系统) 📌
-- [§G. 道具系统](#g-道具系统) 📌
-- [§H. AI 系统](#h-ai-系统) 📌
-- [§I. 渲染与场景图](#i-渲染与场景图) ⏳
-- [§J. 资源解析](#j-资源解析) ⏳
-- [§K. 数学库/工具](#k-数学库工具) ⏳
-- [§L. 顶层函数索引](#l-顶层函数索引) ⏳
+- [§E. 输入系统](#e-输入系统) ✅ →[详解](./FUNCTIONS_DETAIL.md)
+- [§F. 音效系统](#f-音效系统) ✅ →[详解](./FUNCTIONS_DETAIL.md)
+- [§G. 道具系统](#g-道具系统) ✅ →[详解](./FUNCTIONS_DETAIL.md)
+- [§H. AI 系统](#h-ai-系统) ✅ →[详解](./FUNCTIONS_DETAIL.md)
+- [§I. 渲染与场景图](#i-渲染与场景图) ✅ →[详解](./FUNCTIONS_DETAIL.md)
+- [§J. 资源解析](#j-资源解析) ✅ →[详解](./FUNCTIONS_DETAIL.md)
+- [§K. 数学库/工具](#k-数学库工具) ✅ →[详解](./FUNCTIONS_DETAIL.md)
+- [§L. 顶层函数索引](#l-顶层函数索引) ✅ →[详解](./FUNCTIONS_DETAIL.md)
 
 ---
 
@@ -559,52 +563,115 @@
 
 ---
 
-## §E. 输入系统 📌
+## §E. 输入系统 ✅
 
-> 类:`n$`(键盘) / `u$`(触摸) / 键码映射 `an`
-> 详见 UNDERSTOOD.md §31。待补完整函数签名。
+> 类:`n$`(键盘,L22627-L22709) / `u$`(触摸,L22960-L23117) / 键盘状态机 `nP`(L17113-L17228) / 自动前进 `s$`(L22714-L22748) / 布局编辑器 `a$`(L22756-L22896) / 物理子步 `k$`(L23465)
+> 详见 UNDERSTOOD.md §31。
 
-### E.1 `n$` 类(键盘输入,L22630-L22708)
+### E.1 动作枚举 `ft` 与绑定表 `dr`(L17097-L17321)✅
 
-- **事件**:keydown / keyup(全局) + focusin(焦点切换取消输入)
-- **状态**:
-  - `keyboardActions`(Set) / `touchActions`(Set) / `transitions`(数组)
-  - `keyMap`:键码→动作映射表(可自定义)
-- **方法**:
-  - `drain()`:排空 records → 生成 transitions(去重:keyboard 优先于 touch)
-  - `isKeyboardRepeat`:用 `releasedKeys` Set 区分真释放与自动重复
-  - `cancelAll()` / `cancelGameplayInput()`:焦点丢失/暂停时清空
-  - `setEnabled(bool)`:比赛阶段控制
+- `ft`(L17097-L17112):`SteerLeft=0, SteerRight=1, Forward=2, Reverse=3, Drift=4, UseItemOrBooster=5, ReorderItems=6, SecondaryItem=7, GaugeState=8, DisplayMode=9, Help=0xa, Reset=0xb, ModeImpulsePositive=0x19, ModeImpulseNegative=0x1a`
+- `dr`(L17233-L17321):22 个绑定 `{index, action, defaultKeyCode}`,键码为 **DirectInput 扫描码**(非 KeyboardEvent.code):
+  - `0:SteerLeft=0xCB(←)` / `1:SteerRight=0xCD(→)` / `2:Forward=0xC8(↑)` / `3:Reverse=0xD0(↓)`
+  - `4:Drift=0x2A(ShiftL)` / `5:UseItemOrBooster=0x1D(CtrlL)` / `6:ReorderItems=0x38(AltL)` / `7:SecondaryItem=0x2C(Z)` / `8:GaugeState=0x39(Space)` / `9:Reset=0x13(R)`
+  - 小键盘副键:`0xA:SteerLeft=0x4B(Num4)` / `0xB:SteerRight=0x4D(Num6)` / `0xC:Forward=0x48(Num8)` / `0xD:Reverse=0x50(Num2)` / `0xE:Drift=0x36(ShiftR)` / `0xF:UseItemOrBooster=0x9D(CtrlR)` / `0x10:ReorderItems=0xB8(AltR)`
+  - `0x12:ModeImpulsePositive=0x2C(Z)` / `0x13:ModeImpulseNegative=0x2D(X)` / `0x14:GaugeState=0x2D(X,与 0x13 同键)` / `0x15:DisplayMode=0x17(I)` / `0x16:Help=0x3B(F1)`
+- `an`(L17322-L17325):`Object.fromEntries(dr.map(({index,defaultKeyCode})=>[index,defaultKeyCode]))` — 默认 keyMap(index→扫描码)
+- `cy`(L17326-L17451):扫描码→`[显示名, 是否可绑定]` 表(如 `0x2A:['Shift (Left)',true]`,`0x40:['F6',false]` 不可绑定)
+- `sP`(L17452-L17568):`KeyboardEvent.code → 扫描码` 反查表(`'Escape':1, 'KeyW':0x11, 'ArrowUp':0xC8, ...`)
+- `hy(code)`(L17570-L17572):`= sP[code]`,KeyboardEvent.code → 扫描码
+- `Oh(scancode)`(L17574-L17576):`= cy[scancode]?.[0] ?? ''`,扫描码 → 显示名
+- `ly(scancode)`(L17578-L17580):扫描码是否可绑定(`cy[..][1]===true`)
+- `oP(record)`(L17582-L17590):校验自定义键位:必须为对象、**恰好 22 个绑定**、每键可绑定;否则抛中文错误
+- `X5(map,index,code)`(L22550-L22552):检测某键是否已被其他绑定占用(0x12/0x13 除外)
+- `vo(code,keyMap)`(L22618-L22625):`hy(code)` 得扫描码 → 过滤 `dr` 中 `keyMap[index]===扫描码` 的项 → **动作数组**(一键可映射多动作)
+- F6/F7/F8 调试开关:`dy`(L17604-L17608):`{F6:'enableRoadSound', F7:'fxEnabled', F8:'bgmEnabled'}`(设置界面 dialogShortcut 亦放行 F9/F10/F11/Ctrl+P,L22542)
+- 暂停键:GameApp `onGlobalKeyDown`(L29610):`started && code==='Escape'` → `togglePause()`(**KeyP 不是全局暂停键**,仅在 Ctrl+P 被设置对话框消费)
 
-### E.2 `u$` 类(触摸,L23000-L23117)
+### E.2 `n$` 类(键盘/触摸统一输入管理,L22627-L22709)✅
 
-- `touchCapable = navigator.maxTouchPoints > 0`
-- `usingTouch`:粗指针检测 + 手动切换
-- 虚拟按键:pointerdown/up/cancel/lostpointercapture
-- 多点触控:`pointers Map<pointerId, action>`
-- **自动前进**:`autoForward` 选项,触屏时自动按住 Forward
-- 全屏:requestFullscreen / exitFullscreen
-- 暂停按钮:touch 控件内
+- 构造(L22637-L22642):`window.addEventListener('keydown'/'keyup', {passive:false})` + `document.addEventListener('focusin')`
+- 状态字段(L22628-L22636):`records[]`(原始事件队列) / `keyboardRecordCount` / `transitions[]`(本轮输出) / `releasedKeys:Set` / `keyboardActions:Set` / `touchActions:Set` / `cancelled` / `enabled` / `keyMap=an`;`r$=0x1f`(L22626)为键盘 record 队列上限 31
+- `drain()`(L22643-L22656):逐条消费 records:
+  - 键盘 record(`"code" in rec`):`vo(code,keyMap)` 展开为动作,逐动作 `append('keyboard:'+code, action, down)`
+  - 触摸 record:`applyTouchAction(action, down)`
+  - 清零 `keyboardRecordCount`,splice 返回 `{transitions, cancelled}` 并复位 `cancelled`
+- `onKeyDown`(L22679-L22682):`enabled` 且目标非输入框(`Nc`,L22711-L22713:input/textarea/select/contenteditable)才处理;若映射到动作则 `preventDefault()`;**非自动重复**才 `appendKeyboardRecord(code,true)`
+- `onKeyUp`(L22683-L22685):先 `releasedKeys.add(code)`,再同上,`appendKeyboardRecord(code,false)`
+- `isKeyboardRepeat(e)`(L22689-L22691):`e.repeat && !releasedKeys.delete(code)` — 用 releasedKeys 区分真释放后的重复按下
+- `appendKeyboardRecord(code,down)`(L22694-L22698):键盘 record 队列满 31 时删最旧键盘 record,否则计数 +1,入队
+- `append(source,action,down)`(L22699-L22708):维护 `keyboardActions`;若该动作正被 touch 按住则**不产生 transition**(touch 优先);否则 push `{source:'keyboard:xxx', sourceKind:'keyboard', action, down}`
+- `setTouchAction(action,down)`(L22661-L22665):`enabled` 才把触摸事件入 records;`applyTouchAction`(L22666-L22672):维护 `touchActions`,若 keyboard 未按住同动作则 push `sourceKind:'touch'` transition
+- `setEnabled(b)`(L22673-L22674):关闭时 `cancelAll()`;`cancelAll()`(L22675-L22676)= `cancelGameplayInput()` + 清 releasedKeys
+- `cancelGameplayInput()`(L22692-L22693):清空 records/transitions/keyboardActions/touchActions,置 `cancelled=true`(下游 drain 后联动 `drivingInput.cancel()` + `physics.cancelControls()`,L29072)
+- `dispose()`(L22677-L22678):移除监听 + 禁用
+- GameApp 装配(L28433):`this.input = new n$(); input.setKeyMap(gameOptions.keyMap); input.setEnabled(false)`(比赛阶段再开)
 
-### E.3 默认键码映射 `an`(L17381-L17452)
+### E.3 `u$` 类(触摸控件,L22960-L23117)✅
 
-- Forward:ArrowUp / KeyW
-- Reverse:ArrowDown / KeyS
-- Left:ArrowLeft / KeyA
-- Right:ArrowRight / KeyD
-- Drift:ShiftLeft / ShiftRight
-- Boost:Space / ControlLeft
-- Pause:Escape / KeyP
-- F6/F7/F8:调试开关
+- 构造(L22961-L22962):注入 DOM:`SIM` 菜单按钮 + `<dialog class="touch-menu">`(显示/隐藏按键、自动前进、暂停、全屏、调整按键、返回)+ `.touch-pad`:
+  - 修饰键组(`touch-modifiers`):`Drift`(漂移)/ `ft.UseItemOrBooster`(氮气)/ `ft.GaugeState`(释放超负荷)
+  - 方向组(`touch-arrows`):`Forward`(带 AUTO 角标)/ `SteerLeft` / `Reverse` / `SteerRight`
+- 字段(L23002-L23010):`touchCapable = navigator.maxTouchPoints>0`;`usingTouch = touchCapable && coarsePointer.matches`;`autoForward = d$()`(localStorage `kartsim.auto-forward`,L22953/L23123);`autoForwardSuspended = document.hidden`;`keyMap = an`
+- `bindButton(btn)`(L23032-L23046):按 `data-drive` 建立按钮→ft 动作;`pointerdown`(主键、pad 可见、非编辑态):`preventDefault()` + `useVirtualInput()` + `setPointerCapture`;`pointers.set(pointerId, action)`;仅当该动作尚无指针按住时才 `onAction(action,true)`(多点触控去重)
+- `releasePointer(id)`(L23047-L23052):pointerup/cancel/lostpointercapture 统一走此;仅当该动作已无任何指针按住才 `onAction(action,false)`
+- `onTouchEnd`(L23053-L23057):`touches.length===0` 时释放全部 touch 指针
+- `releaseAll`(L23026-L23029):`suspendAutoForward()` + 释放所有指针
+- `onAction` 回调即 `input.setTouchAction(action,down)`(L28433 构造传入);第 3 参回调为 `togglePause`,第 4 参为 `setAutoForwardEnabled`
+- `setRaceState(available,paused)`(L23011-L23012) / `refresh()`(L23058-L23061) / `refreshPad`(L23062) / `drivingPadVisible`(L23064-L23065):`touchCapable && available && !paused && 可见 && !menu.open`
+- 自动前进:`refreshAutoForward`(L23066-L23068) → `setAutoForwardAllowed = autoForward && usingTouch && !suspended && padVisible`;`setAutoForwardActive`(L23023-L23025)给 Forward 按钮加 `is-auto-forward` 类;`onAutoForwardToggle`(L23075-L23083)写 localStorage,失败提示"仅本次有效"
+- 模式切换:`useVirtualInput()`(L23073-L23074)置 usingTouch=true;`onTouch`(L23105-L23107)任意 touch 指针启用;`onKeyDown`(L23108-L23110)映射到动作的键盘输入则 `usingTouch=false + suspendAutoForward()`
+- 全屏:`onScreen`(L23084-L23093)requestFullscreen/exitFullscreen,不支持时 `showScreenHelp`(L23094-L23095);`onFullscreenChange`(L23096-L23101)处理 iOS standalone
+- 布局编辑器 `a$`(L22756-L22896):拖动/键盘微调按钮位置,`localStorage["kartsim.touch-layout"]`(Fp,L22749),`h$`/`l$`/`zs`(L22931-L22952)校验 `x,y∈[0,1], w,h∈[44,144]`;`Dp`/`Ip`(L22898-L22914)以 fixed + clamp 定位
+- 自动前进策略 `s$`(L22714-L22748):`enabled/armed/ready`;`setRaceState(available, armed)`(L22720-L22721,armed 由 GameApp 传入 `Countdown|Racing 且非起步喷窗`,L29074);`isActive(snapshot)` = engaged 且 `reverse===0`;`apply(snapshot)`(L22726-L22730)engage 时强制 `forward=1`;`dispatch`(L22731-L22736):**键盘 forward-down 会取消 armed**;touch forward-down 才 arm(L22741-L22744);reverse-down 时先补发 `forward-up`
 
-### E.4 输入→物理映射
+### E.4 键盘状态机 `nP`(L17113-L17228)✅
 
-- `rawSteer = (left ? 1 : 0) - (right ? 1 : 0)`(±1)
-- `steeringInverted` 可反转
-- `forward = forwardInput ? 1 : 0`
-- `reverse = reverseInput ? 1 : 0`
-- 漂移:driftInput 触发 `delayedDriftRequest` → 下一子步 `triggerPhase`
-- boost:boostInput 触发 `instantAccelerationActive`
+- 字段(L17114-L17127):`leftHeld/rightHeld/rawDriftHeld/derivedDriftHeld`、`forwardSource/reverseSource`(0/1)、`rawSteer`、`swapForwardReverse/invertSteering`、`actionMarkerWord`(位标志字)、`forwardBatchGate/forwardBatchDown`、`driftPressCount`(0xffff 回绕)、`driftReleaseMarker`
+- `dispatch(transitions, cb)`(L17128-L17137):遍历 transitions 调 `dispatchOne`;**Forward 批处理门**:`forwardBatchGate` 置位时遇 Forward transition 只更新 `forwardBatchDown` 并 break(暂停恢复等场景丢弃排队的前进沿)
+- `dispatchOne(t, cb)`(L17169-L17211)按动作:
+  - `SteerLeft`:down→`setRawSteer(1)`,up→rightHeld? -1 : 0;每次都调 `updateDriftChord`
+  - `SteerRight`:对称(`setRawSteer(-1)`)
+  - `Forward`:`forwardSource=down?1:0`;`actionMarkerWord=Qe(word,0x1,0x2,down)`(L17178);cb 发 `{kind:'forward-down'|'forward-up'}`
+  - `Reverse`:同上,位 `0x4/0x8`,kind `reverse-down/up`
+  - `Drift`:`rawDriftHeld=down`;**down 时 `driftPressCount=(count+1)&0xffff`、清 release 标记;up 时置 release 标记**(L17188);再 `updateDriftChord`
+  - `UseItemOrBooster`:仅 down 时 cb `{kind:'use-item-or-booster'}`
+  - `Reset`:down 时 `{kind:'reset'}`;`GaugeState`:down 时 `{kind:'instant-acceleration'}`;其余 `{kind:'unsupported-action'}`
+- `updateDriftChord(down, cb, t)`(L17212-L17224):
+  - down:需 `rawDriftHeld && rawSteer!==0` 才置 `derivedDriftHeld=true` 并发 `{kind:'drift-start', direction: rawSteer>0?1:-1}`(方向键+漂移组合键)
+  - up:`derivedDriftHeld=rawDriftHeld`,发 `{kind:'drift-stop', active: rawDriftHeld}`(松方向键但漂移键仍按住 → active=true 保持漂移)
+- `setRawSteer(v)`(L17225-L17227):写 rawSteer 并维护 actionMarkerWord 位:左转位 `0x10/0x20`、右转位 `0x40/0x80`(`Qe(word,setBit,clearBit,set)` L17230-L17232 互斥位对);Forward 用 `0x1/0x2`、Reverse 用 `0x4/0x8`
+- `snapshot()`(L17140-L17152):返回 `{forward, reverse(经 swapForwardReverse 交换), steer=rawSteer*(invert?-1:1), rawSteer, steeringInverted, rawDriftHeld, derivedDriftHeld, actionMarkerWord}`
+- `cancel()`(L17138-L17139):清全部 held/source/标记,`setRawSteer(0)`
+- `getDriftEdgeMetadata()`(L17164-L17168):返回 `{pressCount, released}`(供连喷/双喷窗口判定,`getForwardBatchState` L17159-L17163 同理)
+
+### E.5 输入→物理链路(GameApp 侧)✅
+
+- 每帧 `frame()` → `drainDrivingInput(nowMs, dt)`(L29070-L29075):
+  1. `input.drain()` 得 `{transitions, cancelled}`
+  2. `cancelled` → `drivingInput.cancel()` + `autoForward.cancel()` + `physics.cancelControls()` + 灯光复位
+  3. `autoForward.setRaceState(finishAtMs===0 && (Countdown|Racing), Racing && !isStartBoosterWindow)`
+  4. `drivingInput.dispatch(transitions, (kind,t) => autoForward.dispatch(kind,t,drivingInput.snapshot(),cmd => handleDrivingCommand(cmd,nowMs,dt)))`
+- `handleDrivingCommand`(L29019-L29020):`handleBaseDrivingCommand` + 非暂停时 `handleTimeAttackDrivingCommand`
+- `handleBaseDrivingCommand`(L29028-L29044):`drift-start/stop`、`forward-down/up`、`reverse-down/up` → `physics.handleDrivingCommand(cmd, getDrivingSnapshot())`;forward/reverse 同时驱动 `activeLampFlares.setInputPair('front'/'rear', down)`
+- `handleTimeAttackDrivingCommand`(L29045-L29067):
+  - `forward-up`:起步喷窗内 → `physics.startRaceBooster()`;重置转速表 1 输入模式
+  - `forward-down`:起步喷窗内 → `startRaceBooster()`;再 `physics.startPlayBooster(snapshot)`(漂移+前进起步,见 §G.5)
+  - `use-item-or-booster` → `physics.handleDrivingCommand(...)`(普通氮气);`instant-acceleration` 仅 Racing 时转发
+  - `reset` → Racing 时 `initiateSpeedReset(true)`(L29053-L29055)
+- `getDrivingSnapshot()`(L29026-L29027):`= autoForward.apply(drivingInput.snapshot())`
+- GameApp `frame()` 主体(L28679-L28682):`const snap = getDrivingSnapshot()` → `activeCoordinator.run(nowMs, snap)`
+
+### E.6 输入快照→物理子步 ✅
+
+- `mB.run(nowMs, snapshot)`(L27296-L27308):把 snapshot 存 `this.input`,经 fB core 依次执行 `GoTrack → GoCourse → GoPlayKart → GoItemObstacle[] → GoItemEventObject[]`;`GoPlayKart.slot12`(L27272-L27275)内 `this.schedule = kart.update(nowMs, input, track)`;finally 清空 input(缺快照直接 throw,L27274)
+- `k$.update(nowMs, input, track)`(L23483-L23491):`clock.advance()` 把帧时长切成 **2ms 定点子步**(`b$.advance` L23340-L23360,单帧上限 500ms,每片 ≤2ms);每片调 `stepSubstep(sliceMs*0.001, input, track)`
+- `stepSubstep(dt, input, ctx)`(L23845-L23869):dt 必须 ∈(0, 2ms](fround(0.002),L23846);顺序:`updateStateTimer → updateDriftLifecycleTimers → scanSpecialRoad → rebuildBodyState → probeWheels → applyResetSurfaceRequest → (轨)applyFull3DRail → applySuspension → applyLongitudinal(dt, input, F) → delayedDriftRequest 补触发 → applySteeringAndTires(dt, input, F, T) → applyRoadConsumers → applyBoosterChargeSurface → applyDrag → captureRail/returnToStandard → integrateVelocity → 槽量表 → resolvePrimaryCollision(ctx, input) → ...`
+- 快照消费点:
+  - `applyLongitudinal(dt, input, F)`(L24125-L24167):`input.forward>0` 且非锁定 → 前进推力(系数随 physicsState 1..0xb / 2 / 0xa / instantAccelerationActive 分档);`input.reverse>0` → 倒车(`reverseAccumulator>0.2s` 才给倒车力,否则刹停/保持);无输入且 |纵向速度|≤0.5 → 滚动阻力刹停
+  - `applySteeringAndTires(dt, input, F, T)`(L24168-):`rawSteer*(steeringInverted?-1:1)`,`maxAngle=rad(maxSteerDeg)`(L24177),速度衰减 `exp(-(|v|/steerConstraint)*steeringExponentialScale)`(L24179-L24180);`input.forward!==0` 时用 steeringEnvelope 限制突变;漂移触发相位使用同一 steer 值
+  - `resolvePrimaryCollision(ctx, input)`(L24505-):路面/障碍 OBB 碰撞(快照参数在轨模式 3D 中还会传入 applyFull3DRail,L23850)
+- 空闲快照常量 `x$`(L23380-L23389):`{forward:0,reverse:0,steer:0,rawSteer:0,steeringInverted:false,rawDriftHeld:false,derivedDriftHeld:false,actionMarkerWord:0}` — 演示/回放路径(L23844)用它步进物理
 
 ---
 
@@ -676,30 +743,91 @@
 
 ---
 
-## §G. 道具系统 📌
+## §G. 道具系统 ✅
 
-> 详见 UNDERSTOOD.md §30。H5 版仅 booster/charger。
+> H5 版 KartSim **无传统对抗道具**(水弹/水雷/导弹/乌云/磁铁道具本体均无运行时代码),仅保留:①加速器(booster)/能量收集器(charger)体系;②赛道 itemCube/obstacle/event 数据通道;③音效/特效资源位。
+> 详见 UNDERSTOOD.md §30。逐函数逆向结论如下。
 
-### G.1 关键发现
+### G.1 道具相关数据通道(track 侧)✅
 
-- H5 版 KartSim **道具系统非常有限**,仅实现 booster/charger 相关逻辑:
-  - boosterTypes:1=普通/2=漂移/3=加速器/0xD=区域/0xE=跳跃区/0xF=交付/0x10=磁铁/0x12=播放
-  - 道具音效:`sound_/item/magnet/using.ogg`(磁铁,L25562)
-- **无传统道具**(飞弹/水炸弹/香蕉皮/蘑菇/乌云等)代码
-- 赛道道具有:itemCube(道具箱)/obstacle(障碍)/event(事件)— L4071-L4094
-  - `onlyItemGame` 模式标志控制道具参与
-- UI 层 itemBox 组件(L19221):道具/物品展示窗口
+- `tx(root, mode)`(L4056-L4085):track 对象 runtime 消费审计。`ToItemCube` / `ToMovableObject` 中:
+  - `object type` 属性(L4071-L4075)截断 `\0` 后比对;`itemCube`、`obstacle`、`event` 三类;mode 为 `speed-individual|time-attack`(`za`,L4092-L4094)时跳过 itemCube(L4074)
+  - time-attack 下仅 `status==='admit'` 的 obstacle 放行(L4076);其余 `obstacle/event` 未接入 → 报 "尚未接入 M5 runtime"(L4077)
+- `C0(obj)`(L4087-L4090):读取 `object` 属性的 `onlyItemGame` 标志;为 true 的对象在非道具模式被 loader 省略(`qi(.., "only-item-game-loader-omission")` L27113)
+- `auditTrackObject(...)`(L27053-L27170)逐类判定:
+  - `ToItemCube`(L27109):`hg(mode)`(计时类)→ `cube-loader-omission`;`item` 模式 → `cube-grant-unclosed`(未实现);否则 `cube-mode-unclosed`。**即道具箱获取/发放(grant)代码在本版未闭合**
+  - `banana/ltejump/mine/mineHidden/waterMine`(L27126):**这些道具类型名存在于类型比对表**,但在 `speed-individual/speed-team/time-attack` 模式一律 `excluded-nonboost-item-runtime`(排除,无 runtime)
+  - `obstacle`(L27127-L27149):admit 时 owner="TimeAttack GoItemObstacle snapshot",producer="ToMovableObject obstacle wire + live PRS matrices",pair capacity 8,"commit N -> kart consumption N+1"
+  - `event`(L27150-L27163):owner 含 "kart effect presentation + standalone track sound",属性含 effect/scale/gravity/sound/rearm=capacity8
+- `mB` 协调器注册 `GoItemObstacle[]`(L27264)与 `GoItemEventObject[]`(L27265):slot12=track.updateObstacles/updateEvents,slot13=registerObstaclePair/registerEventPairs,commit=commitObstacleSnapshot/commitEventSnapshot(L27266-L27271)
+- UI 层 `itemBox`(L19227-L19229 `drawItemBox` 等):是**车库/装备物品窗口**(分类 tab + 搜索 + `draftProfile.equipment.itemIds`),与比赛中道具无关
 
-### G.2 booster 特效加载(L6826-L6933)
+### G.2 赛道 event 道具(缩放/重力/特效/声音)✅
 
-- 按 `boosterTypes`、`attachments`、`boosterWaveType` 解析 `effect/...` 资源
-- 挂载到 kart 根节点
-- 状态机:`dualVisual`、`exceedActive`,按状态显示/隐藏特效
+- `resolveTrackEvents(ctx)`(L24614-L24623,子步内调用):对 `ctx.queryEventObb(secondaryCollisionBox())` 命中的每个 event:
+  - `scalePercent` → `triggerEventScale()`,非法值 throw(中文:"不在已证 P3528 语料")
+  - `gravity` → `triggerEventGravity()`,同上
+  - `effect` → `trackEventEffectRequests.push({effect, atMs: currentUpdateMs})`
+- `triggerEventScale(pct)`(L23749-L23757):仅接受 `0x64(100%)` 与 `0x140(320%)`;写 `eventScaleTarget={pct/100}`、`eventScaleMode=1`(平滑过渡到目标缩放)
+- `triggerEventGravity(g)`(L23757-L23761):仅接受 `[1, 1.5, 2, 3, 3.2, 5, 9]`;触发时速度 ÷4、角速度 ÷5,`gravityDivisor=g`
+- `updateEventGravity(nowMs)`(L24498-L24504):记录 anchor,`nowMs-anchor > 1000ms` 且着地后恢复 `gravityDivisor=1`
+- GameApp 消费(L28581-L28584):`physics.consumeTrackEventEffectRequests()`(L23620-L23622)→ `activeTrackEventEffects.trigger(effect, atMs)`(缺失 owner 直接 throw)
 
-### G.3 结论
+### G.3 obstacle 道具(压扁/硬停)✅
 
-- H5 版以 TimeAttack 为核心,道具系统仅保留 booster/charger
-- 完整道具系统需自行实现(参考跑跑卡丁车经典道具设计)
+- `resolveStaticObstacles(ctx)`(子步内,L23865;主体 L24505-L24613):OBB 相撞时按法线高度分:
+  - `normal.y > 0.65`(高障碍):速度反射 + `applyHighObstacleAngularResponse`(L24645-L24647)翻滚角速度
+  - 低障碍:`applyCollisionDriftGaugePreserve(false)`(L24658-L24663)按 `driftGaguePreservePercent` 保留集气,**charger 激活时保留 100%**;`|响应|>10` 置 `strongLateralCollision`(crash 特效);写入 collisionMotion/AudioStrength
+  - `pressMode==="hard-stop"` → `activateHardPress()`(L24643-L24644):压扁缩放(mode1)、`obstacleSuppressionRemainingMs=500ms`、`pressProtected1C0`(压扁保护免前进推力)、清速度
+  - `pressMode==="directional"`(L24611)→ `activateDirectionalPress(1|2)`(L24641-L24642):横向/纵向压扁、2000ms 抑制、`automaticResetRequest`
+- 自动重生计时:`updatePrimaryAutomaticResetTimers` / `updateObstacleAutomaticResetTimer` / `advanceAutomaticResetTimer`(L24633-L24640):低/高碰撞 1s、障碍 0.4s 累计后 `automaticResetRequest=true` → GameApp `initiateSpeedReset(false)`(L28693)
+
+### G.4 booster(加速器)体系 ✅
+
+- physicsState 状态码(由代码归纳):`0=无` / `1=起步喷(startBooster)` / `2=漂移连喷窗(driftBoost)` / `3=普通氮气` / `0xa=双喷` / `0xd..0x10=区域/跳跃/交付/磁铁区(仅状态保留,驱动音效)` / `0x12=起步道具喷(play)`
+- `startRaceBooster()`(L23690-L23693):仅 `physicsState===0`;`stateRemainingMs = max(0, tuning.startBoosterTimeSpeed)`,`physicsState=1`
+- `startPlayBooster(snapshot)`(L23696-L23697):需 `raceMotionLocked && snapshot.rawDriftHeld`(倒计时中按住漂移+前进的起步姿态);`physicsState=0x12, stateRemainingMs=1000ms`
+- `startNormalBooster(snapshot)`(L24382-L24386,由 `use-item-or-booster` 命令触发 L23584-L23585):条件 `physicsState∈{0,0x12} && snapshot.forward>0 && speedSlots[0]===6`(有氮气槽);消耗一个槽(shift+push -1),`physicsState=3`,`stateRemainingMs = tuning.normalBoosterTime`;统计 `resultBoosterCount++`、`chargerBoosterUses++`、`chargerPendingUses++` → `activateChargerIfReady()`
+- 氮气槽/集气互转:`updateModeInventory()`(L23725-L23730):满槽(`committedGauge===driftMaxGauge`)时清空量表并在 `speedSlots` 找 `-1` 空位填 `6`,`state.nitro` = 槽中 6 的个数(值 6 即"满氮气",最多 2 槽,初始槽表见 `speedSlots` 初始化)
+- 双喷:`armDualBooster()`(L24412-L24413,普通喷后 arm)/ `refreshDualBoosterReady()`(L24414-L24429,尾窗 = normalBoosterTime 的 `dualBoosterTickMin..Max` 百分比)/ `classifyDualBoosterReady()`(L24430-L24431:过早 0x2 / 过晚(+50ms) 0x3 / 低速 0x4 / 就绪 0x6 / auto 0x7 / 手动待 0x8)/ `updateDualBooster()`(L24405-L24411:autoArm 且就绪 → `physicsState=0xa` 双喷)
+- 立即加速(超负荷,GaugeState):`handleDrivingCommand case 'instant-acceleration'`(L23587-L23588):`instAccelGaugeLength>0 && instantGauge>=instAccelGaugeMinUsable` → `instantAccelerationActive=true`;充能 `updateInstantAccelerationGauge`(L24669-):按 `chargeInstAccelGaugeByGrip/ByBoost(+charger 加成 ByBoostAdded)`,激活时每秒消耗 `instantGauge`
+- 墙碰充能:`updateInstantWallCharge`(update 内 L23488)/ `beginInstantWallCharge`(L24696 附近,charger 激活加成 `chargeInstAccelGaugeByWall+...Added`)
+- 路面充能:`applyBoosterChargeSurface()`(L23870-L23873):路面描述符 `bcharge` 时 `committedGauge` 每子步 +1.6(封顶)
+
+### G.5 charger(能量收集器)✅
+
+- `activateChargerIfReady()`(L24387-L24392):`chargerEnabled && chargerSystemBoosterUseCount>0 && boosterUses>0 && uses/count > activations && 未过期 && 未激活 && pendingUses===count` → `chargerActive=true`、`chargerActivations++`、`chargerExpiryMs = now + max(1, chargerSystemUseTime)`
+- `updateChargerExpiry(nowMs)`(L24393-L24394):过期后清 active/expiry/pending
+- 加成点:漂移集气 ×`driftGaugeFactor`(L24368)、低速集气 +`chargeBoostBySpeedAdded`(L24373)、碰撞保集气 100%(L24662)、超负荷充能加成(L24678)、追加速比(L24662 附近)
+- UI/特效读取:`timeAttackTachometerCharger()`(L23659-L23665)返回 `{count: chargerPendingUses, capacity: chargerSystemBoosterUseCount, active, durationMs}`;GameApp `activeChargerEffect.update(...)`(L28588-L28589)
+
+### G.6 漂移集气(道具槽的来源)✅
+
+- 窗口开启:漂移触发相位结束时(`triggerTimer` 耗尽,L24203)`driftGaugeWindow=true, driftGaugeElapsed=0, pendingGauge=0`
+- `accumulateDriftGauge(dt, rail)`(L24358-L24368):需着地/轨且窗口开且 `localForwardSpeed>=0`;`inc = rightSpeed² × dt`(轨模式 ×2);时间加权:`<0.2s ×3`,`0.2-0.5s ×1.5`,之后 `/(2×elapsed)`;charger 激活再 ×`driftGaugeFactor`
+- `commitDriftGauge()`(L24379-L24381):`committedGauge = min(driftMaxGauge, committed+pending)`,关窗清零(`stopDrift`/`beginResetInitiation` 等调用)
+- `accumulateSpeedGauge`(L24369-L24378):非漂移低速充能(`tachometerIncGauge`,`chargeBoostBySpeed`)
+
+### G.7 道具与音效联动($u 类)✅
+
+- `$u.load()`(L25555-L25564)按 **boosterTypes/physicsState 码** 建 `stateBuffers: Map<码, AudioBuffer>`:
+  - `1=boosterStart` / `2=boosterDrift` / `3=booster` / `0xd=boosterZone` / `0xe=boosterJumpZone` / `0xf=boosterDelivery` / **`0x10 = sound_/parseTrackContainer/item/magnet/using.ogg`(磁铁,唯一 item 音效)** / `0x12=boosterPlay`
+  - 引擎等级 >6 另载 `dualBoosterReady / dualBooster / charger / exceed`(L25565-L25568)
+- `setState(state, dualState)`(L25669-L25670)/ `updateStateSource`(L25696-L25697):physicsState 变化即切换循环音源(0xa 双喷走 enterDualBooster;0xf 无 delivery 资源时静音)
+- `setChargerActive(b)`(L25680-L25688):charger.ogg 循环开关;`setExceedActive`(L25671-L25679):exceed.ogg;`setTransformingState`(L25689-L25695):变形车音
+- 碰撞音:`playCollision(strength, ms)`(L25643-L25651,节流 + 音量按强度)/ `playSteeringCollision`(L25652-L25660,**中断引擎音**后播 crash)/ `playLandingShock`(L25661-L25668,gain=clamp(0.1..1, strength*0.04))
+
+### G.8 道具与动画/特效联动 ✅
+
+- booster 特效加载 `Rl.load`(L6826-L6916):遍历 `boosterTypes` + `attachments` 节点,加载 `effect/booster|boosterFlare/<type>/booster|boosterTeam|boosterPlay.1s`;引擎 >6 加载 `boosterDual(_S)/boosterDualReady(_S)`;另有 `baseBoosterWave/boosterWave/driftBoostWave/exceedWave`(L6886-L6910)
+- `Rl.setState(state, dualMode, exceedActive, ms)`(L6917-L6933):`dualVisual ∈ none|ready|dual`(state=0xa 且 dualMode=1 → ready;state=3/5 且 dualMode=1 → dual),按当前 state 的期望 kind(`JS(state)`/`tA(state)`)切换 visible 并 reset 补间
+- GameApp 每帧(L28577-L28589):`kartView.update(state, clock, speed, audioState)` 返回动画槽 → `physics.setAnimationSlot(0..6)`(L23761-L23763);`activeKartMotionBlur.setState(stateCode, speed)`;`consumeCrashEffectRequest`/`consumeShockWaveRequest` 驱动 crash/shockwave 特效;charger 特效见 §G.5
+- 压扁:`setVisualScaleMode`(L24438-L24447)+ `updateVisualScale`(L24448-,pn 插值表 L23433-L23441,最长 600ms 恢复)
+
+### G.9 结论:未找到的道具功能(明确列出)✅
+
+- **未找到**(全文检索无运行时代码,仅类型字符串/资源路径出现):水弹(water)、水雷(waterMine,仅类型比对 L27126)、导弹/飞弹(missile)、香蕉皮(banana,仅 L27126)、乌云(cloud)、电磁/磁铁道具本体(magnet 仅有 using.ogg 音效映射 L25562 与 boosterTypes 0x10 状态码,无获取/使用逻辑)、道具箱拾取发放(cube-grant-unclosed L27125/L27109)、道具换位 ReorderItems/副道具 SecondaryItem **有键位绑定(dr index 6/7)但 `dispatchOne` 落入 `unsupported-action`(L17205-L17210),GameApp 亦无处理分支**
+- 道具模式的准入由 `onlyItemGame`(L4088)、`za(mode)`(L4092)、`hg(mode)`(cube 判定)等 loader 审计函数预留,H5 仅实现 TimeAttack/速度赛,道具分支均为 block/omit
 
 ---
 
