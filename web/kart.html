@@ -44,6 +44,7 @@
       <label><input type="radio" name="cam" value="top">俯视</label>
       <label><input type="radio" name="cam" value="free">自由</label>
     </label>
+    <label><input type="checkbox" id="cb-official" checked>官方物理(cotton1)</label>
     <label>人物动作 <select id="anim-sel">
       <option value="auto" selected>自动(随驾驶状态)</option>
       <option value="f40">f40 直行骑乘循环 1.37s</option>
@@ -302,8 +303,11 @@ addEventListener('keydown', e => {
 });
 addEventListener('keyup', e => { keys[e.key] = false; });
 const drive = { speed: 0, steer: 0, heading: 0, boost: false, crashUntil: 0, time: 0, reversePhase: 'none', vy: 0,
-  prevX: 0, prevZ: -24 };
+  prevX: 0, prevZ: -24, model: 'official' };
 window.__drive = drive;
+document.getElementById('cb-official').onchange = e => {
+  drive.model = e.target.checked ? 'official' : 'test';
+};
 // 出生地: 跑道下直道中线, 朝 +x(右)
 const SPAWN = { x: 0, z: -24, heading: Math.PI / 2 };
 // 圆角矩形 SDF(围栏碰撞): <0 在内部
@@ -527,19 +531,40 @@ renderer.setAnimationLoop(() => {
   const up = keys['ArrowUp'] || keys['w'], down = keys['ArrowDown'] || keys['s'];
   const left = keys['ArrowLeft'] || keys['a'], right = keys['ArrowRight'] || keys['d'];
   drive.boost = !!keys['Control'] && drive.speed > 0.5;
-  const cap = drive.boost ? boostMax : maxSpeed;
-  if (up) drive.speed = Math.min(drive.speed + accel * dt, cap);
-  else if (down) drive.speed = Math.max(drive.speed - accel * 0.7 * dt, -4);
-  else {
-    drive.speed *= (1 - 1.2 * dt);
-    // 惰行小速度直接刹停(指数衰减只趋近0, 不清零会持续蠕动看似自动倒车)
-    if (Math.abs(drive.speed) < 0.15) drive.speed = 0;
+  // 官方物理: kartspec id=1(cotton1) 真实数值 —— 力/质量 + 二次阻力, 无硬顶
+  const OFFICIAL = { mass: 100, forwardAccel: 2160, backwardAccel: 1775, airFriction: 3,
+                     dragFactor: 0.75, gripBrake: 2070, boostAccelFactor: 1.494, steerConstraint: 22.25 };
+  if (drive.model === 'official') {
+    let a = 0;
+    if (up) a += OFFICIAL.forwardAccel * (drive.boost ? OFFICIAL.boostAccelFactor : 1) / OFFICIAL.mass;
+    if (down) {
+      if (drive.speed > 0.5) a -= OFFICIAL.gripBrake / OFFICIAL.mass;   // 行进中按↓ = 刹车
+      else a -= OFFICIAL.backwardAccel / OFFICIAL.mass;                  // 倒车推力
+    }
+    // 阻力: 二次(决定极速) + 线性
+    a -= drive.speed * Math.abs(drive.speed) * OFFICIAL.dragFactor / OFFICIAL.mass
+       + drive.speed * OFFICIAL.airFriction / OFFICIAL.mass;
+    drive.speed += a * dt;
+    if (!up && !down && Math.abs(drive.speed) < 0.15) drive.speed = 0;
+    drive.speed = Math.max(drive.speed, -12);   // 倒车保守限幅(官方倒车极速无独立数据)
+  } else {
+    const cap = drive.boost ? boostMax : maxSpeed;
+    if (up) drive.speed = Math.min(drive.speed + accel * dt, cap);
+    else if (down) drive.speed = Math.max(drive.speed - accel * 0.7 * dt, -4);
+    else {
+      drive.speed *= (1 - 1.2 * dt);
+      // 惰行小速度直接刹停(指数衰减只趋近0, 不清零会持续蠕动看似自动倒车)
+      if (Math.abs(drive.speed) < 0.15) drive.speed = 0;
+    }
   }
   const steerTarget = left ? 1 : right ? -1 : 0;
   drive.steer += (steerTarget - drive.steer) * Math.min(1, 8 * dt);
+  // 官方: 高速转向衰减 exp(-|v|/steerConstraint); 测试: 线性起步
+  const steerEff = drive.model === 'official'
+    ? Math.exp(-Math.abs(drive.speed) / OFFICIAL.steerConstraint)
+    : Math.min(1, Math.abs(drive.speed) / 4);
   if (Math.abs(drive.speed) > 0.1)
-    drive.heading += drive.steer * steerRate * dt * Math.sign(drive.speed) *
-      Math.min(1, Math.abs(drive.speed) / 4) * (drive.speed > 0 ? 1 : -1);
+    drive.heading += drive.steer * steerRate * dt * steerEff;
   // 车移动(数据空间 z-up -> 用一个地面 Group 载具: kart 已在 zup_root 下, 直接动 kartRoot)
   if (kartRoot && Math.abs(drive.speed) > 0.02) {
     // zup_root 内 +Y 是车头; 世界(呈现)移动沿 heading
