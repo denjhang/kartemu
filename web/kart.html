@@ -5,6 +5,15 @@
 <title>车+人完全体 - 板车 + 皮蛋 + 挂件</title>
 <style>
   html, body { margin: 0; overflow: hidden; background: #202530; }
+  #tacho { position: fixed; right: 18px; bottom: 14px; text-align: right;
+           font: bold 34px/1 monospace; color: #eef; text-shadow: 0 0 6px #000;
+           background: rgba(10,14,20,.55); padding: 10px 14px 8px; border-radius: 8px;
+           user-select: none; }
+  #tacho small { display: block; font: 11px/1.6 monospace; color: #9ab; letter-spacing: 2px; }
+  #gauge { margin-top: 6px; display: flex; gap: 2px; justify-content: flex-end; }
+  #gauge i { width: 10px; height: 14px; background: #2a3038; border-radius: 1px; }
+  #gauge i.on { background: #b8e04a; }
+  #gauge i.on.hi { background: #ff5a3c; }
   #ui { position: fixed; left: 12px; top: 12px; color: #fff; font: 13px/1.7 monospace;
         text-shadow: 0 1px 2px #000; user-select: none; }
   input { vertical-align: middle; }
@@ -20,6 +29,7 @@
 <body>
 <div id="ui">
   <div id="info">加载中…</div>
+  <div id="tacho"><span id="kmh">000</span><small>km/h</small><div id="gauge"></div></div>
   <div>转向 <input id="steer" type="range" min="-1" max="1" step="0.01" value="0">
        <span id="steerV">0.00</span>
        车速 <input id="speed" type="range" min="0" max="30" step="0.5" value="8"></div>
@@ -447,6 +457,27 @@ for (const [id, key] of [['cb-rider', 'rider'], ['cb-camera', 'camera'],
 const baseMats = new Map();
 const clock = new THREE.Clock();
 
+// ---- 速度表(官方语义: 表显 km/h=|v|*3.6, 3 位补零 + 19 格条满 350, >=15 格高段色, key 缓存节流) ----
+const kmhEl = document.getElementById('kmh');
+const gaugeEl = document.getElementById('gauge');
+const gaugeCells = [];
+for (let i = 0; i < 19; i++) {
+  const c = document.createElement('i');
+  gaugeEl.appendChild(c);
+  gaugeCells.push(c);
+}
+let tachoKey = '';
+function updateTacho() {
+  const kmh = Math.trunc(Math.abs(drive.speed) * 3.6);
+  const seg = Math.min(19, Math.trunc(kmh * 19 / 350));
+  const key = kmh * 32 + seg;
+  if (key === tachoKey) return;
+  tachoKey = key;
+  kmhEl.textContent = String(kmh).padStart(3, '0');
+  for (let i = 0; i < 19; i++)
+    gaugeCells[i].className = i < seg ? (seg >= 15 ? 'on hi' : 'on') : '';
+}
+
 // ---- 存档: 位置+朝向+视角, localStorage, 刷新自动恢复 ----
 const SAVE_KEY = 'kartemu_save_v1';
 function saveState() {
@@ -710,6 +741,7 @@ renderer.setAnimationLoop(() => {
     // free: 不动
   }
   controls.update();
+  updateTacho();
   renderer.render(scene, camera);
 });
 
