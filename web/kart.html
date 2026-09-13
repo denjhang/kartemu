@@ -423,6 +423,7 @@ Promise.all([
   const ctr = box.getCenter(new THREE.Vector3());
   camera.position.set(ctr.x, ctr.y + 3.5, ctr.z - 9);
   camera.lookAt(ctr);
+  applyState(loadState());   // 有存档则恢复位置/视角(须在初始机位之后)
   document.getElementById('info').textContent =
     '完全体就绪: 板车(绿漆+号牌) + 皮蛋(自动状态机) + 头戴摄像机 + 风镜 + 气球';
 }).catch(e => {
@@ -448,6 +449,46 @@ for (const [id, key] of [['cb-rider', 'rider'], ['cb-camera', 'camera'],
 
 const baseMats = new Map();
 const clock = new THREE.Clock();
+
+// ---- 存档: 位置+朝向+视角, localStorage, 刷新自动恢复 ----
+const SAVE_KEY = 'kartemu_save_v1';
+function saveState() {
+  if (!kartRoot) return;
+  try {
+    localStorage.setItem(SAVE_KEY, JSON.stringify({
+      pos: kartRoot.position.toArray(),
+      heading: drive.heading,
+      camMode,
+      follow: { ...followCam },
+      cam: camera.position.toArray(),
+      target: controls.target.toArray(),
+    }));
+  } catch (e) { /* 存储不可用则忽略 */ }
+}
+function loadState() {
+  try { return JSON.parse(localStorage.getItem(SAVE_KEY)); } catch (e) { return null; }
+}
+function applyState(s) {
+  if (!s || !kartRoot) { window.__applyResult = 'skip:' + (s ? 'no-kart' : 'no-save'); return; }
+  kartRoot.position.fromArray(s.pos);
+  kartRoot.rotation.y = s.heading;
+  drive.heading = s.heading;
+  drive.prevX = s.pos[0]; drive.prevZ = s.pos[2];
+  if (s.camMode && s.camMode !== camMode) {
+    const r = document.querySelector('input[name=cam][value=' + s.camMode + ']');
+    if (r) r.click();          // 触发对应视角初始化
+  }
+  if (s.follow) Object.assign(followCam, s.follow);
+  // 只有自由视角恢复确切机位/注视点; 其余模式机位由模式逻辑派生
+  if (s.camMode === 'free') {
+    if (s.cam) camera.position.fromArray(s.cam);
+    if (s.target) controls.target.fromArray(s.target);
+    controls.update();
+  }
+  window.__applyResult = 'applied:' + s.pos.map(v => v.toFixed(1)).join(',');
+}
+setInterval(saveState, 1500);
+addEventListener('beforeunload', saveState);
 renderer.setAnimationLoop(() => {
   // dt 钳制: 切标签页回来等场景 dt 突增会让弹簧/物理爆炸
   const dt = Math.min(clock.getDelta(), 0.05);
