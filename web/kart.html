@@ -58,6 +58,11 @@
   </div>
 </div>
 <script>
+// 全局错误显示: 模块加载卡在"加载中…"时把错误写到 info
+addEventListener('error', e => {
+  const el = document.getElementById('info');
+  if (el && /加载中/.test(el.textContent)) el.textContent = '脚本错误: ' + e.message;
+});
 // 环境守卫(file:// 直开时浏览器禁止加载模型/模块, 先于 module 检查)
 if (location.protocol === 'file:') {
   document.getElementById('info').innerHTML =
@@ -154,6 +159,8 @@ scene.add(gridMesh);
 // ---- 测试场景装饰: 跑道/车道线/围栏/树/房屋/远山 (程序化生成) ----
 const scenery = new THREE.Group();
 scene.add(scenery);
+// 场景实体碰撞体(树/房屋, {x,z,r} 圆近似)
+const solidColliders = [];
 const lambert = c => new THREE.MeshLambertMaterial({ color: c });
 // 圆角矩形闭环路径(XZ 平面, Vector2 = (x,z))
 function loopPath(hw, hh, r) {
@@ -235,6 +242,7 @@ fence(loopPath(31.5, 11.5, 3));
     new THREE.ConeGeometry(0.9, 2.2, 7), lambert(0x2f8d46), spots.length);
   const M = new THREE.Matrix4();
   spots.forEach(([x, z, s], i) => {
+    solidColliders.push({ x, z, r: 0.5 * s });
     M.makeScale(s, s, s); M.setPosition(x, 0.5 * s, z); trunks.setMatrixAt(i, M);
     M.setPosition(x, 2.1 * s, z); crowns.setMatrixAt(i, M);
   });
@@ -245,6 +253,7 @@ fence(loopPath(31.5, 11.5, 3));
 [[62, 0, 0.3], [-62, 10, -0.4], [40, 44, 1.2], [-40, -44, -1.8],
  [70, -25, 2.5], [-70, 25, -2.2], [10, 48, 0], [-12, -48, 3.1]].forEach(([x, z, rot], i) => {
   const w = 3 + i % 3, d = 2.5 + i % 2, h = 1.6;
+  solidColliders.push({ x, z, r: Math.max(w, d) / 2 + 0.2 });
   const body = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), lambert(i % 2 ? 0xe8ddc0 : 0xd9a066));
   body.position.y = h / 2;
   const roof = new THREE.Mesh(new THREE.ConeGeometry(Math.max(w, d) * 0.72, 1.1, 4), lambert(0xa04030));
@@ -272,19 +281,29 @@ const rotZ = a => new THREE.Matrix4().makeRotationZ(a);
 const keys = {};
 addEventListener('keydown', e => {
   keys[e.key] = true;
-  if (e.key.startsWith('Arrow') || e.key === 'Control') e.preventDefault();
+  if (e.key.startsWith('Arrow') || e.key === 'Control' || e.key === ' ') e.preventDefault();
   if (e.key === 'r' || e.key === 'R') {
     if (kartRoot) {
-      kartRoot.position.set(0, kartRoot.position.y, 0);
-      kartRoot.rotation.y = 0;
-      drive.heading = 0; drive.speed = 0; drive.steer = 0;
+      kartRoot.position.set(SPAWN.x, 0, SPAWN.z);
+      kartRoot.rotation.y = SPAWN.heading;
+      drive.heading = SPAWN.heading; drive.speed = 0; drive.steer = 0; drive.vy = 0;
+      drive.prevX = SPAWN.x; drive.prevZ = SPAWN.z;
       window.__balloonPos && window.__balloonPos.set(0, 1.15, 1.8);
       window.__balloonVel && window.__balloonVel.set(0, 0, 0);
     }
   }
 });
 addEventListener('keyup', e => { keys[e.key] = false; });
-const drive = { speed: 0, steer: 0, heading: 0, boost: false, crashUntil: 0, time: 0, reversePhase: 'none' };
+const drive = { speed: 0, steer: 0, heading: 0, boost: false, crashUntil: 0, time: 0, reversePhase: 'none', vy: 0,
+  prevX: 0, prevZ: -24 };
+window.__drive = drive;
+// 出生地: 跑道下直道中线, 朝 +x(右)
+const SPAWN = { x: 0, z: -24, heading: Math.PI / 2 };
+// 圆角矩形 SDF(围栏碰撞): <0 在内部
+function rrectSDF(x, z, hw, hh, r) {
+  const qx = Math.abs(x) - (hw - r), qz = Math.abs(z) - (hh - r);
+  return Math.hypot(Math.max(qx, 0), Math.max(qz, 0)) + Math.min(Math.max(qx, qz), 0) - r;
+}
 
 let kartRoot, rekart, handleChild, wheelChildren = [], mainAngle = 0;
 let mixer = null, accMixer = null, balloonT = 0, balloonNodeRef = null;
@@ -310,6 +329,9 @@ Promise.all([
     g.scene.traverse(o => { if (o.isMesh) o.frustumCulled = false; }));
   scene.add(kart.scene);
   kartRoot = kart.scene;
+  kartRoot.position.set(SPAWN.x, 0, SPAWN.z);
+  kartRoot.rotation.y = SPAWN.heading;
+  drive.heading = SPAWN.heading;
   rekart = kart.scene.getObjectByName('ReKart');
   const kids = rekart.children;
   handleChild = kids[1].children[0];
@@ -427,7 +449,8 @@ for (const [id, key] of [['cb-rider', 'rider'], ['cb-camera', 'camera'],
 const baseMats = new Map();
 const clock = new THREE.Clock();
 renderer.setAnimationLoop(() => {
-  const dt = clock.getDelta();
+  // dt 钳制: 切标签页回来等场景 dt 突增会让弹簧/物理爆炸
+  const dt = Math.min(clock.getDelta(), 0.05);
   if (mixer) mixer.update(dt);
   // ---- 驾驶更新 ----
   drive.time += dt;
@@ -463,6 +486,46 @@ renderer.setAnimationLoop(() => {
       drive.crashUntil = drive.time + 0.5;                      // f47 强碰撞 0.5s
       drive.speed = -drive.speed * 0.3;
       kartRoot.position.x += dx * 0.3; kartRoot.position.z += dz * 0.3;
+    }
+  }
+  // 空格跳跃(CS式: 起跳后越围栏, 落地恢复碰撞)
+  if (kartRoot) {
+    if (keys[' '] && drive.vy === 0 && kartRoot.position.y <= 0) drive.vy = 6;
+    if (drive.vy !== 0 || kartRoot.position.y > 0) {
+      drive.vy -= 18 * dt;
+      kartRoot.position.y = Math.max(0, kartRoot.position.y + drive.vy * dt);
+      if (kartRoot.position.y === 0) drive.vy = 0;
+    }
+  }
+  // 围栏碰撞: 只阻止"地面穿越"(上一帧与这一帧在围栏两侧则弹回),
+  // 围栏外可自由走动不抽风; 空格跳起(离地>0.9)可跨越
+  if (kartRoot) {
+    const p = kartRoot.position;
+    if (p.y < 0.9) {
+      const walls = [
+        { hw: 56.5, hh: 36.5, r: 13, limit: -0.4 },  // 外圈
+        { hw: 31.5, hh: 11.5, r: 3,  limit: 0.4 },   // 内圈
+      ];
+      for (const w of walls) {
+        const dNow = rrectSDF(p.x, p.z, w.hw, w.hh, w.r);
+        const dPrev = rrectSDF(drive.prevX, drive.prevZ, w.hw, w.hh, w.r);
+        // prev 无效(初始/R复位瞬间)不判定, 防止 undefined 污染坐标成 NaN
+        if (Number.isFinite(dPrev) && (dNow > w.limit) !== (dPrev > w.limit)) {
+          p.x = drive.prevX; p.z = drive.prevZ;
+          drive.speed *= -0.3;
+        }
+      }
+    }
+    drive.prevX = p.x; drive.prevZ = p.z;
+    // 场景碰撞体(树/房, 全高度实体): 圆近似推挤
+    for (const c of solidColliders) {
+      const dx = p.x - c.x, dz = p.z - c.z, rr = c.r + 0.6;
+      const d2 = dx * dx + dz * dz;
+      if (d2 < rr * rr && d2 > 1e-6) {
+        const d = Math.sqrt(d2);
+        p.x = c.x + dx / d * rr; p.z = c.z + dz / d * rr;
+        drive.speed *= -0.3;
+      }
     }
   }
   // ---- 状态机(用户确认的动画含义) ----
@@ -555,7 +618,12 @@ renderer.setAnimationLoop(() => {
     const vel = window.__balloonVel;
     vel.addScaledVector(force, dt);
     vel.multiplyScalar(1 - damping * dt);
+    // 严格限定: 速度/位置硬钳制, 杜绝弹簧抽风(上天入地)
+    if (vel.length() > 3) vel.setLength(3);
     bp.addScaledVector(vel, dt);
+    bp.x = Math.min(0.6, Math.max(-0.6, bp.x));
+    bp.y = Math.min(1.4, Math.max(0.5, bp.y));
+    bp.z = Math.min(2.4, Math.max(1.2, bp.z));
     parts.balloon.position.copy(bp);
     // 绳: 锚点 -> 气球底
     const a = window.__anchor, b = parts.balloon.position;
