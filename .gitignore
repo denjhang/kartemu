@@ -38,6 +38,7 @@ kartspec.csv
 web/track/
 web/kart/
 web/character/
+web/tacho/
 
 # ---- 其它 ----
 __pycache__/

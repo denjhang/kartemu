@@ -5,15 +5,20 @@
 <title>车+人完全体 - 板车 + 皮蛋 + 挂件</title>
 <style>
   html, body { margin: 0; overflow: hidden; background: #202530; }
-  #tacho { position: fixed; right: 18px; bottom: 14px; text-align: right;
-           font: bold 34px/1 monospace; color: #eef; text-shadow: 0 0 6px #000;
-           background: rgba(10,14,20,.55); padding: 10px 14px 8px; border-radius: 8px;
-           user-select: none; }
-  #tacho small { display: block; font: 11px/1.6 monospace; color: #9ab; letter-spacing: 2px; }
-  #gauge { margin-top: 6px; display: flex; gap: 2px; justify-content: flex-end; }
-  #gauge i { width: 10px; height: 14px; background: #2a3038; border-radius: 1px; }
-  #gauge i.on { background: #b8e04a; }
-  #gauge i.on.hi { background: #ff5a3c; }
+  #tacho { position: fixed; right: 18px; bottom: 14px; width: 249px; height: 175px;
+           user-select: none; pointer-events: none;
+           background: url('tacho/cotton.png') no-repeat; background-position: 0 0; }
+  #tacho .hand { position: absolute; left: 26px; top: 76px; width: 55px; height: 10px;
+                 background: url('tacho/cotton.png') no-repeat; background-position: -284px -113px;
+                 transform-origin: 54px 4px; }
+  #tacho .boost { position: absolute; left: 162px; top: 23px; width: 42px; height: 26px;
+                  background: url('tacho/cotton.png') no-repeat; }
+  #tacho .boost.off { background-position: -284px 0; }
+  #tacho .boost.on  { background-position: -284px -26px; }
+  #tacho .digit { position: absolute; top: 92px; width: 22px; height: 31px;
+                  background: url('tacho/cotton.png') no-repeat; }
+  #tachoHint { position: fixed; right: 18px; bottom: 190px; color: #9ab; font: 11px monospace;
+               text-shadow: 0 0 4px #000; }
   #ui { position: fixed; left: 12px; top: 12px; color: #fff; font: 13px/1.7 monospace;
         text-shadow: 0 1px 2px #000; user-select: none; }
   input { vertical-align: middle; }
@@ -29,7 +34,14 @@
 <body>
 <div id="ui">
   <div id="info">加载中…</div>
-  <div id="tacho"><span id="kmh">000</span><small>km/h</small><div id="gauge"></div></div>
+  <div id="tacho">
+    <div class="boost off"></div>
+    <div class="hand" id="tacho-hand"></div>
+    <div class="digit" id="kmh-0"></div>
+    <div class="digit" id="kmh-1"></div>
+    <div class="digit" id="kmh-2"></div>
+  </div>
+  <div id="tachoHint">tacho: cotton 官方皮肤 1:1(表盘 0-375km/h)</div>
   <div>转向 <input id="steer" type="range" min="-1" max="1" step="0.01" value="0">
        <span id="steerV">0.00</span>
        车速 <input id="speed" type="range" min="0" max="30" step="0.5" value="8"></div>
@@ -500,25 +512,32 @@ for (const [id, key] of [['cb-rider', 'rider'], ['cb-camera', 'camera'],
 const baseMats = new Map();
 const clock = new THREE.Clock();
 
-// ---- 速度表(官方语义: 表显 km/h=|v|*3.6, 3 位补零 + 19 格条满 350, >=15 格高段色, key 缓存节流) ----
-const kmhEl = document.getElementById('kmh');
-const gaugeEl = document.getElementById('gauge');
-const gaugeCells = [];
-for (let i = 0; i < 19; i++) {
-  const c = document.createElement('i');
-  gaugeEl.appendChild(c);
-  gaugeCells.push(c);
-}
+// ---- 速度表(官方 cotton 皮肤 1:1: tacho.bml + cotton@zz.png 图集) ----
+// Graduation hand: minDegree=-90 maxDegree=180 minValue=0 maxValue=375, axis=54,4(旋转轴心)
+// CharPanel kmh: fontPos=0,170 fontSize=22,31 fontStr='0123456789'
+// Panel boost_Off/On: uv 284,0 / 284,26(喷气灯)
+const tachoHand = document.getElementById('tacho-hand');
+const tachoDigits = [0, 1, 2].map(i => document.getElementById('kmh-' + i));
+const tachoBoost = document.querySelector('#tacho .boost');
 let tachoKey = '';
 function updateTacho() {
   const kmh = Math.trunc(Math.abs(drive.speed) * 3.6);
-  const seg = Math.min(19, Math.trunc(kmh * 19 / 350));
-  const key = kmh * 32 + seg;
+  const key = kmh + (drive.boost ? 'b' : '');
   if (key === tachoKey) return;
   tachoKey = key;
-  kmhEl.textContent = String(kmh).padStart(3, '0');
-  for (let i = 0; i < 19; i++)
-    gaugeCells[i].className = i < seg ? (seg >= 15 ? 'on hi' : 'on') : '';
+  // 指针: 0~375 -> -90°~180°(表盘刻度上限 375, 按 minValue/maxValue 线性)
+  const v = Math.min(375, kmh);
+  const deg = -90 + v / 375 * 270;
+  tachoHand.style.transform = 'rotate(' + deg + 'deg)';
+  // 数字: 每位从图集 fontPos(0,170) 取 22x31 字形
+  const str = String(Math.min(kmh, 999)).padStart(3, '0');
+  for (let i = 0; i < 3; i++) {
+    const d = +str[i];
+    tachoDigits[i].style.left = (144 + i * 22) + 'px';
+    tachoDigits[i].style.backgroundPosition = (-(d * 22)) + 'px -170px';
+  }
+  // 喷气灯
+  tachoBoost.className = 'boost ' + (drive.boost ? 'on' : 'off');
 }
 
 // ---- 存档: 位置+朝向+视角, localStorage, 刷新自动恢复 ----
