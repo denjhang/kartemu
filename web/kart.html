@@ -230,7 +230,7 @@ const latRight = f => [-f[2], f[0]];
   }
   for (let i = 0; i < N; i++) {
     const a = i * 2, b = i * 2 + 1, c = ((i + 1) % N) * 2, d = c + 1;
-    idx.push(a, c, b, b, c, d);
+    idx.push(a, b, c, b, d, c);   // 从上往下看逆时针 -> 法线朝上(此前绕向朝下导致路面隐形)
   }
   const geo = new THREE.BufferGeometry();
   geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
@@ -261,7 +261,9 @@ const latRight = f => [-f[2], f[0]];
     geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
     geo.setIndex(idx);
     geo.computeVertexNormals();
-    scenery.add(new THREE.Mesh(geo, lambert(0x4f9640)));
+    const m = new THREE.Mesh(geo, lambert(0x4f9640));
+    m.material.side = THREE.DoubleSide;
+    scenery.add(m);
   }
 }
 // 路肩高程(车跟随): |lat|<=10 -> 路面高; 以外按堤岸系数回落
