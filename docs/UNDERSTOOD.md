@@ -1052,3 +1052,12 @@ Port0/FirePort0/... 属性;attachmentNodes = 按名字在模型树找节点。
 - 比赛开始时: 创建/复用 AudioContext → 加载赛道 BGM + 车辆音效 + 倒计时音效 + 事件音效 → `activeKartAudio.start()`
 - 暂停: `setPaused(true)` → 停止效果源
 - 恢复: `context.resume()`
+
+## 33. 深度逆向对照: 动画补间/漂移集气喷气/音频/仪表 (2026-09-13)
+
+四方向并行逆向成果, 完整报告见 **docs/REV_COMPARE.md**(含总差异速查表与迁移顺序建议)。要点:
+- 动画: f41/f42 官方是循环保持非一次性; 倒车直接 f45/f46 按 steer 符号(无 f43/f44); 补间=快照+定时混合(enterBlend 50-400ms 分档, pos lerp + 四元数 nlerp), 一次性动作 span 后自动 returnBlend 淡回(pending 抢占限制); 碰撞按强度分级(>30 f47 锁1s / 15-30 f48 / 更小忽略); 表情 face map 随状态换。
+- 物理: 重力 58.8; 2ms 定点子步; 无速度硬 cap(力 vs |v|^2*drag 平衡); 轮胎侧向力 980*grip; 漂移=triggerPhase(关后轮抓地点火)->activeDrift(envelope+slip 削弱)->driftDecay 尾滑; 自动甩尾触发 |lat|>1.2|fwd| 且 v>15m/s。
+- 集气: 漂移集气=dt*侧向速度^2, 时间加权 前0.2s x3 / 0.2-0.5s x1.5 / 之后 /(2t); 满槽填氮气槽(值6); 大喷=消耗槽首 physicsState=3 限时; 连喷=尾窗内重按前进(state 2); 双喷 state 0xa(engineGrade>6)。
+- 音频: 每源 gain->destination 无总线; 引擎 loop motor.ogg, 64ms 节流, rate=speed*3/256+0.25(cap 1.5); BGM 16 步 x 100ms crossfade; 全资源路径规则见 REV_COMPARE §三。
+- 仪表: 表显 km/h=|v|*3.6; 3 位补零 + 19 格条(满 350, >=15 格高段色); key 缓存节流; 无 DOM HUD 全纹理 quad; 无转速表。
