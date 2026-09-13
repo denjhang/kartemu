@@ -397,8 +397,12 @@ FR.forEach((f, i) => {
   const x = f.p[0] + r[0] * off, z = f.p[2] + r[1] * off;
   const gy = f.p[1] * shoulderK(off);
   const w = 3 + k % 3, d = 2.5 + k % 2, h = 1.6;
-  if (!clearOfRoad(x, z, Math.max(w, d) / 2 + 3)) return;   // 不得压路
-  solidColliders.push({ x, z, r: Math.max(w, d) / 2 + 0.2 });
+  const rr = Math.max(w, d) / 2 + 0.2;
+  if (Math.abs(x - SPAWN.x) < 60 && Math.abs(z - SPAWN.z) < 60) return;  // 出生区留空
+  if (!clearOfRoad(x, z, rr + 3)) return;                                 // 不得压路
+  // 与已有实体互斥(重叠碰撞体会把车夹死)
+  if (solidColliders.some(c => Math.hypot(c.x - x, c.z - z) < c.r + rr + 1.5)) return;
+  solidColliders.push({ x, z, r: rr });
   const body = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), lambert(k % 2 ? 0xe8ddc0 : 0xd9a066));
   body.position.y = gy + h / 2;
   const roof = new THREE.Mesh(new THREE.ConeGeometry(Math.max(w, d) * 0.72, 1.1, 4), lambert(0xa04030));
@@ -466,6 +470,7 @@ const drive = { speed: 0, steer: 0, heading: 0, boost: false, crashUntil: 0, tim
   gauge: 0, slots: [-1, -1],
   state: 0, stateMs: 0, tailMs: 0 };
 window.__drive = drive;
+window.__colliders = solidColliders;
 
 // ---- 引擎/效果音(官方 $u 语义, REV_COMPARE §三) ----
 const SFX = { ctx: null, motor: null, motorGain: null, lastMotorUpd: 0,
@@ -710,6 +715,12 @@ function loadState() {
 }
 function applyState(s) {
   if (!s || !kartRoot) { window.__applyResult = 'skip:' + (s ? 'no-kart' : 'no-save'); return; }
+  // 落点安全校验: 卡进实体碰撞体(重叠夹死)则弃档回出生点
+  const sp = s.pos;
+  if (solidColliders.some(c => Math.hypot(c.x - sp[0], c.z - sp[2]) < c.r + 0.7)) {
+    window.__applyResult = 'blocked-save:respawn';
+    Object.assign(s, { pos: [SPAWN.x, 0, SPAWN.z], heading: SPAWN.heading });
+  }
   kartRoot.position.fromArray(s.pos);
   kartRoot.rotation.y = s.heading;
   drive.heading = s.heading;
@@ -884,9 +895,14 @@ renderer.setAnimationLoop(() => {
     for (const c of solidColliders) {
       const dx = p.x - c.x, dz = p.z - c.z, rr = c.r + 0.6;
       const d2 = dx * dx + dz * dz;
-      if (d2 < rr * rr && d2 > 1e-6) {
-        const d = Math.sqrt(d2);
-        p.x = c.x + dx / d * rr; p.z = c.z + dz / d * rr;
+      if (d2 < rr * rr) {
+        // 圆心正中(d2~0)无法定向, 用路线右向推出
+        const d = Math.sqrt(d2), inv = d > 1e-3 ? 1 / d : 0;
+        let ux, uz;
+        if (inv) { ux = dx * inv; uz = dz * inv; }
+        else { const fr = FR[drive.routeHint >= 0 ? drive.routeHint : 0], rr2 = latRight(fr.f);
+               ux = rr2[0]; uz = rr2[1]; }
+        p.x = c.x + ux * rr; p.z = c.z + uz * rr;
         drive.speed *= -0.3;
       }
     }
