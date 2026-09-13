@@ -107,7 +107,8 @@ const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x87ceeb);
 // 官方视距: TrackObject camera far=400 + 线性雾 0.5~1.0xfar(UNDERSTOOD §27)
 scene.fog = new THREE.Fog(0x87ceeb, 200, 400);
-const camera = new THREE.PerspectiveCamera(40, innerWidth / innerHeight, 0.05, 400);
+// near=0.5(勿改小): 太小的 near 会让远处 24bit 深度精度不足, 路面/草地间距 0.03 会 Z-fight 闪烁
+const camera = new THREE.PerspectiveCamera(40, innerWidth / innerHeight, 0.5, 400);
 const controls = new OrbitControls(camera, renderer.domElement);
 window.__cam = camera; window.__controls = controls; window.__scene = scene;
 
@@ -219,7 +220,7 @@ const ROAD = {
   outer.holes.push(new THREE.Path(loopPath(...ROAD.inner).getSpacedPoints(4000).reverse()));
   const road = new THREE.Mesh(new THREE.ShapeGeometry(outer), lambert(0x3a3f44));
   road.rotation.x = -Math.PI / 2;
-  road.position.y = 0.02;
+  road.position.y = 0.05;   // 与草地(-0.01)保持 0.06 间距, 配合 near=0.5 防 Z-fight
   scenery.add(road);
   // 中央车道虚线(InstancedMesh, 全环 ~1300 根)
   const cl = loopPath(...ROAD.cl).getSpacedPoints(2600);
@@ -233,7 +234,7 @@ const ROAD = {
     const nxt = cl[(i + 1) % cl.length];
     E.set(0, Math.atan2(nxt.x - cl[i].x, nxt.y - cl[i].y), 0);
     Q.setFromEuler(E);
-    P.set(cl[i].x, 0.03, cl[i].y);
+    P.set(cl[i].x, 0.06, cl[i].y);
     M.compose(P, Q, S1);
     dashes.setMatrixAt(n++, M);
   }
