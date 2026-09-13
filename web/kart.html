@@ -127,14 +127,8 @@ document.querySelectorAll('input[name=cam]').forEach(r => r.onchange = e => {
 });
 
 scene.add(new THREE.HemisphereLight(0xffffff, 0x445566, 2.0));
-// 草绿地面
-const groundMesh = new THREE.Mesh(
-  new THREE.PlaneGeometry(2000, 2000),
-  new THREE.MeshBasicMaterial({ color: 0x5aa843 }));
-groundMesh.rotation.x = -Math.PI / 2;
-groundMesh.position.y = -0.02;
-scene.add(groundMesh);
-// 无限远网格(Shader)
+// 草地+网格合一(单层不透明 shader): 远处线条淡出为纯草地,
+// 避免双平面远距 Z-fight 闪烁与网格摩尔纹
 const gridMesh = new THREE.Mesh(
   new THREE.PlaneGeometry(2000, 2000),
   new THREE.ShaderMaterial({
@@ -148,9 +142,11 @@ const gridMesh = new THREE.Mesh(
         float a=1.-min(l,1.);
         float d=length(vWP.xz);
         float fade=1.-smoothstep(60.,200.,d);
-        gl_FragColor=vec4(vec3(.08,.28,.06),min(a*.95*fade,1.));
+        vec3 grass=vec3(.353,.659,.263);
+        vec3 line =vec3(.08,.28,.06);
+        gl_FragColor=vec4(mix(grass,line,a*fade),1.);
       }`,
-    transparent: true, side: THREE.DoubleSide, depthWrite: false,
+    side: THREE.DoubleSide,
   }));
 gridMesh.rotation.x = -Math.PI / 2;
 gridMesh.position.y = -0.01;
@@ -187,6 +183,7 @@ function loopPath(hw, hh, r) {
   outer.holes.push(new THREE.Path(loopPath(38, 18, 4).getSpacedPoints(200).reverse()));
   const road = new THREE.Mesh(new THREE.ShapeGeometry(outer), lambert(0x3a3f44));
   road.rotation.x = -Math.PI / 2;
+  road.position.y = 0.02;
   scenery.add(road);
   // 中央车道虚线
   const dashGeo = new THREE.PlaneGeometry(0.25, 2.2);
@@ -196,7 +193,7 @@ function loopPath(hw, hh, r) {
   for (let i = 0; i < cl.length; i += 2) {
     const nxt = cl[(i + 1) % cl.length];
     const dash = new THREE.Mesh(dashGeo, dashMat);
-    dash.position.set(cl[i].x, 0.01, cl[i].y);
+    dash.position.set(cl[i].x, 0.03, cl[i].y);
     dash.rotation.y = Math.atan2(nxt.x - cl[i].x, nxt.y - cl[i].y);
     scenery.add(dash);
   }
