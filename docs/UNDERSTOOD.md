@@ -1061,3 +1061,13 @@ Port0/FirePort0/... 属性;attachmentNodes = 按名字在模型树找节点。
 - 集气: 漂移集气=dt*侧向速度^2, 时间加权 前0.2s x3 / 0.2-0.5s x1.5 / 之后 /(2t); 满槽填氮气槽(值6); 大喷=消耗槽首 physicsState=3 限时; 连喷=尾窗内重按前进(state 2); 双喷 state 0xa(engineGrade>6)。
 - 音频: 每源 gain->destination 无总线; 引擎 loop motor.ogg, 64ms 节流, rate=speed*3/256+0.25(cap 1.5); BGM 16 步 x 100ms crossfade; 全资源路径规则见 REV_COMPARE §三。
 - 仪表: 表显 km/h=|v|*3.6; 3 位补零 + 19 格条(满 350, >=15 格高段色); key 缓存节流; 无 DOM HUD 全纹理 quad; 无转速表。
+
+## 34. 官方比例标定(2026-09-13, 城镇高速公路 track.1s 实测)
+
+- **单位系统统一**: kart 模型(1.56x1.71x0.98)与赛道 track.1s 同单位, 装配无缩放(l0 L2365 仅 rotation.x=-PI/2)。
+- **主环一圈 31,820 单位**(course 5 段: RoadObj01 start..highin 13197 + icin 2405 + high 1990 +
+  icout 1811 + RoadObj01 highout..end 12416; icin/high/icout 实为内外/高架分支路线)。
+- **路宽**: 门三角形短边 20 单位 = 11.8 个车长; 全图 footprint 841 x 1478, 地形起伏 75。
+- **视距**: TrackObject camera far=400 + 线性雾 start0.5~end1.0(即 200-400)。
+- **含义**: 官方世界是"大世界小车"——186km/h(51.7u/s) 跑一圈需 ~10min, 游戏观感靠雾和宽路支撑。
+  kart.html 测试赛道已按此标定: 10020x6020 环(圈长约 31400u), 路宽 20, 雾 200-400, kart 不变。
