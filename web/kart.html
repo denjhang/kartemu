@@ -106,7 +106,8 @@ document.body.appendChild(renderer.domElement);
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x87ceeb);
 // 官方视距: TrackObject camera far=400 + 线性雾 0.5~1.0xfar(UNDERSTOOD §27)
-scene.fog = new THREE.Fog(0x87ceeb, 200, 400);
+// 官方雾色 r184 g224 b255(TrackObject fog XML)——淡蓝白大气雾, 与天色区分, 远处地面读作雾而非天空
+scene.fog = new THREE.Fog(0xb8e0ff, 200, 400);
 // near=0.5(勿改小): 太小的 near 会让远处 24bit 深度精度不足, 路面/草地间距 0.03 会 Z-fight 闪烁
 const camera = new THREE.PerspectiveCamera(40, innerWidth / innerHeight, 0.5, 400);
 const controls = new OrbitControls(camera, renderer.domElement);
@@ -162,17 +163,19 @@ const gridMesh = new THREE.Mesh(
     fragmentShader: `
       varying vec3 vWP;
       void main(){
+        // 雾距/线淡出必须用相机实时位置(cameraPosition 内置 uniform),
+        // 锚定固定点会导致开远后整片地面被画成 100% 雾色
+        float d=length(vWP.xz - cameraPosition.xz);
         vec2 c=vWP.xz/2.;
         vec2 g=abs(fract(c-.5)-.5)/fwidth(c);
         float l=min(g.x,g.y);
         float a=1.-min(l,1.);
-        float d=length(vWP.xz - vec3(0.,0.,-3000.).xz);
         float fade=1.-smoothstep(40.,150.,d);
         vec3 grass=vec3(.353,.659,.263);
         vec3 line =vec3(.08,.28,.06);
         vec3 col=mix(grass,line,a*fade);
         float fd=smoothstep(200.,400.,d);
-        col=mix(col,vec3(.529,.808,.922),fd);
+        col=mix(col,vec3(.7216,.8784,1.),fd);
         gl_FragColor=vec4(col,1.);
       }`,
     side: THREE.DoubleSide,
