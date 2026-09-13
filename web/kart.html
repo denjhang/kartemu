@@ -304,7 +304,11 @@ renderer.setAnimationLoop(() => {
   const cap = drive.boost ? boostMax : maxSpeed;
   if (up) drive.speed = Math.min(drive.speed + accel * dt, cap);
   else if (down) drive.speed = Math.max(drive.speed - accel * 0.7 * dt, -4);
-  else drive.speed *= (1 - 1.2 * dt);
+  else {
+    drive.speed *= (1 - 1.2 * dt);
+    // 惰行小速度直接刹停(指数衰减只趋近0, 不清零会持续蠕动看似自动倒车)
+    if (Math.abs(drive.speed) < 0.15) drive.speed = 0;
+  }
   const steerTarget = left ? 1 : right ? -1 : 0;
   drive.steer += (steerTarget - drive.steer) * Math.min(1, 8 * dt);
   if (Math.abs(drive.speed) > 0.1)
