@@ -39,6 +39,7 @@ web/track/
 web/kart/
 web/character/
 web/tacho/
+web/sfx/
 
 # ---- 其它 ----
 __pycache__/
