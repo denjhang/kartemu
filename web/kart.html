@@ -62,12 +62,19 @@ renderer.setPixelRatio(devicePixelRatio);
 document.body.appendChild(renderer.domElement);
 
 const scene = new THREE.Scene();
-scene.background = new THREE.Color(0x202530);
+scene.background = new THREE.Color(0x87ceeb);
 const camera = new THREE.PerspectiveCamera(40, innerWidth / innerHeight, 0.05, 2000);
 const controls = new OrbitControls(camera, renderer.domElement);
 window.__cam = camera; window.__controls = controls; window.__scene = scene;
 
 scene.add(new THREE.HemisphereLight(0xffffff, 0x445566, 2.0));
+// 草绿地面
+const groundMesh = new THREE.Mesh(
+  new THREE.PlaneGeometry(2000, 2000),
+  new THREE.MeshBasicMaterial({ color: 0x5aa843 }));
+groundMesh.rotation.x = -Math.PI / 2;
+groundMesh.position.y = -0.02;
+scene.add(groundMesh);
 // 无限远网格(Shader)
 const gridMesh = new THREE.Mesh(
   new THREE.PlaneGeometry(2000, 2000),
@@ -82,7 +89,7 @@ const gridMesh = new THREE.Mesh(
         float a=1.-min(l,1.);
         float d=length(vWP.xz);
         float fade=1.-smoothstep(60.,200.,d);
-        gl_FragColor=vec4(vec3(.22,.24,.28),a*.45*fade);
+        gl_FragColor=vec4(vec3(.08,.28,.06),min(a*.95*fade,1.));
       }`,
     transparent: true, side: THREE.DoubleSide, depthWrite: false,
   }));
