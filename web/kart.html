@@ -1305,6 +1305,8 @@ renderer.setAnimationLoop(() => { try {
         }
         drive.prevWL = { lx, lz, rx: rxp, rz: rzp };
       }
+      // N2O(大喷/小喷)抵消一部分 shift 速度衰减(x0.4) —— 氮气推力顶住侧滑磨速
+      if (drive.state !== 0) decay *= 0.4;
       drive.speed -= Math.sign(drive.speed) * Math.abs(drive.speed) * decay * dt;
       // decay 跟随 0.9/s(漂移中1.8): 滑角缓慢衰减,
       // 滑行时长 ≈ (松Shift时滑角 - 改出阈值) / 0.9 —— 阈值越小滑行越久
