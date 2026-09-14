@@ -696,6 +696,54 @@ document.getElementById('miniBoost').oninput = e => {
   drive.miniBoost = parseFloat(e.target.value);
   document.getElementById('miniBoostV').textContent = drive.miniBoost.toFixed(2);
 };
+// ---- 配置持久化(localStorage, kartemu_cfg_v1): 所有设置保存并恢复, 禁止回退默认 ----
+const CFG_KEY = 'kartemu_cfg_v1';
+const CFG_TOGGLE_IDS = ['cb-rider', 'cb-camera', 'cb-goggle', 'cb-balloon', 'cb-official'];
+function saveCfg() {
+  try {
+    localStorage.setItem(CFG_KEY, JSON.stringify({
+      model: drive.model,
+      driftMode: drive.driftMode,
+      driftSens: drive.driftSens,
+      steerSens: drive.steerSens,
+      miniBoost: drive.miniBoost,
+      shiftDecay: drive.shiftDecay,
+      toggles: CFG_TOGGLE_IDS.map(id => document.getElementById(id).checked),
+    }));
+  } catch (e) { /* 存储不可用则忽略 */ }
+}
+function loadCfg() {
+  let c;
+  try { c = JSON.parse(localStorage.getItem(CFG_KEY)); } catch (e) { return; }
+  if (!c) return;
+  if (c.model) {
+    drive.model = c.model;
+    const el = document.getElementById('cb-official');
+    el.checked = c.model === 'official';
+  }
+  if (c.driftMode) {
+    drive.driftMode = c.driftMode;
+    document.getElementById('driftMode').value = c.driftMode;
+  }
+  const sliders = [['driftSens', 'driftSens', c.driftSens], ['steerSens', 'steerSens', c.steerSens],
+                   ['miniBoost', 'miniBoost', c.miniBoost], ['shiftDecay', 'shiftDecay', c.shiftDecay]];
+  for (const [id, prop, val] of sliders) {
+    if (typeof val !== 'number' || !Number.isFinite(val)) continue;
+    drive[prop] = val;
+    const el = document.getElementById(id);
+    el.value = val;
+    el.dispatchEvent(new Event('input'));
+  }
+  if (Array.isArray(c.toggles)) CFG_TOGGLE_IDS.forEach((id, i) => {
+    if (typeof c.toggles[i] !== 'boolean') return;
+    const el = document.getElementById(id);
+    if (el.checked !== c.toggles[i]) {
+      el.checked = c.toggles[i];
+      el.dispatchEvent(new Event('change'));   // 触发既有 handler 应用到场景
+    }
+  });
+}
+loadCfg();
 document.getElementById('shiftDecay').oninput = e => {
   drive.shiftDecay = parseFloat(e.target.value);
   document.getElementById('shiftDecayV').textContent = drive.shiftDecay.toFixed(2);
@@ -876,6 +924,18 @@ Promise.all([
   camera.position.set(ctr.x, ctr.y + 3.5, ctr.z - 9);
   camera.lookAt(ctr);
   applyState(loadState());   // 有存档则恢复位置/视角(须在初始机位之后)
+  // 配置持久化: 模型加载后重新应用 开关可见性(模块阶段 parts 未就绪, 勾选只存了状态)
+  try {
+    const c = JSON.parse(localStorage.getItem(CFG_KEY));
+    if (c && Array.isArray(c.toggles)) {
+      const ids = ['cb-rider', 'cb-camera', 'cb-goggle', 'cb-balloon'];
+      const pkeys = ['rider', 'camera', 'goggle', 'balloon'];
+      ids.forEach((id, i) => {
+        if (typeof c.toggles[i] === 'boolean' && parts[pkeys[i]])
+          parts[pkeys[i]].visible = c.toggles[i];
+      });
+    }
+  } catch (e) {}
   document.getElementById('info').textContent =
     '完全体就绪: 板车(绿漆+号牌) + 皮蛋(自动状态机) + 头戴摄像机 + 风镜 + 气球';
 }).catch(e => {
@@ -1022,6 +1082,7 @@ function updateExhaust(dt) {
 // ---- 存档: 位置+朝向+视角, localStorage, 刷新自动恢复 ----
 const SAVE_KEY = 'kartemu_save_v3';   // v3: 真实官方路线图(旧坐标不兼容)
 function saveState() {
+  if (typeof saveCfg === 'function') saveCfg();
   if (!kartRoot) return;
   try {
     localStorage.setItem(SAVE_KEY, JSON.stringify({
