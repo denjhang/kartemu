@@ -205,24 +205,35 @@ scene.add(new THREE.HemisphereLight(0xffffff, 0x445566, 2.0));
 const gridMesh = new THREE.Mesh(
   new THREE.PlaneGeometry(30000, 30000),
   new THREE.ShaderMaterial({
-    vertexShader: `varying vec3 vWP; void main(){vec4 w=modelMatrix*vec4(position,1.);vWP=w.xyz;gl_Position=projectionMatrix*viewMatrix*w;}`,
+    vertexShader: `
+      varying vec3 vWP;
+      varying vec2 vG;    // 相机吸附格点的相对坐标(数值小 -> fract 无 float 精度闪烁)
+      void main(){
+        vec4 w = modelMatrix * vec4(position, 1.);
+        vWP = w.xyz;
+        vec2 cs = floor(cameraPosition.xz / 2.) * 2.;   // 吸附到 2m 格点, 保持世界网格对齐
+        vG = w.xz - cs;
+        gl_Position = projectionMatrix * viewMatrix * w;
+      }`,
     fragmentShader: `
       varying vec3 vWP;
+      varying vec2 vG;
       void main(){
         // 雾距/线淡出必须用相机实时位置(cameraPosition 内置 uniform),
         // 锚定固定点会导致开远后整片地面被画成 100% 雾色
-        float d=length(vWP.xz - cameraPosition.xz);
-        vec2 c=vWP.xz/2.;
-        vec2 g=abs(fract(c-.5)-.5)/fwidth(c);
-        float l=min(g.x,g.y);
-        float a=1.-min(l,1.);
-        float fade=1.-smoothstep(40.,150.,d);
-        vec3 grass=vec3(.353,.659,.263);
-        vec3 line =vec3(.08,.28,.06);
-        vec3 col=mix(grass,line,a*fade);
-        float fd=smoothstep(200.,400.,d);
-        col=mix(col,vec3(.7216,.8784,1.),fd);
-        gl_FragColor=vec4(col,1.);
+        float d = length(vWP.xz - cameraPosition.xz);
+        // 网格用相机吸附相对坐标: vG = world - floor(cam/2)*2, 偏移为格点整数倍 -> fract 结果不变
+        vec2 c = vG / 2.;
+        vec2 g = abs(fract(c - .5) - .5) / fwidth(c);
+        float l = min(g.x, g.y);
+        float a = 1. - min(l, 1.);
+        float fade = 1. - smoothstep(40., 150., d);
+        vec3 grass = vec3(.353, .659, .263);
+        vec3 line  = vec3(.08, .28, .06);
+        vec3 col = mix(grass, line, a * fade);
+        float fd = smoothstep(200., 400., d);
+        col = mix(col, vec3(.7216, .8784, 1.), fd);
+        gl_FragColor = vec4(col, 1.);
       }`,
     side: THREE.DoubleSide,
   }));
@@ -406,7 +417,8 @@ const skids = [0, 1].map(() => {
   g.setAttribute('position', new THREE.BufferAttribute(pos, 3).setUsage(THREE.DynamicDrawUsage));
   g.setDrawRange(0, 0);
   const m = new THREE.Mesh(g, new THREE.MeshBasicMaterial({
-    color: 0x181818, transparent: true, opacity: 0.5, depthWrite: false, side: THREE.DoubleSide }));
+    color: 0x181818, transparent: true, opacity: 0.5, depthWrite: false, side: THREE.DoubleSide,
+    polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -4 }))      // 远处防路面深度抢占
   m.frustumCulled = false;
   scenery.add(m);
   return { pos, mesh: m, head: 0, last: null };
@@ -426,7 +438,7 @@ function dropSkid() {
       const len = Math.hypot(dx, dz);
       if (len > 0.05 && len < 2) {                       // 过近跳过; 过远(瞬移/复位)断带重起
         const nx = -dz / len * SKID_W / 2, nz = dx / len * SKID_W / 2;
-        const y = kartRoot.position.y + 0.03;
+        const y = kartRoot.position.y + 0.05;   // 抬高防远处路面 z-fight 吞痕
         const p = s.pos, i = (s.head % SKID_MAX) * 18;
         p[i]   = s.last.x - nx; p[i+1]  = y; p[i+2]  = s.last.z - nz;
         p[i+3] = s.last.x + nx; p[i+4]  = y; p[i+5]  = s.last.z + nz;
@@ -1062,8 +1074,10 @@ renderer.setAnimationLoop(() => { try {
     const Dv = drive.drift, drifting = Dv.phase !== 'none';
     // 官方 L24215: 漂移中前后轮侧向力 ×driftSlipFactor(0.2) -> 漂移抓地 = 20%正常(1.8/s);
     // 反打方向(反甩头)恢复正常抓地拉直; trigger 阶段 ×driftTrigFactor(0.2) 同级
+    // 漂移抓地 = 9×driftSlipFactor(0.2)=1.8 仍太快抽干 vl(非黄油感);
+    // 漂移/滑行取 0.25(vl 长存, 滑), 反打方向恢复 9 拉直
     const grip = !drifting ? 9.0
-      : (Dv.phase !== 'active' ? 1.8 : (drive.steer * Dv.dir < -0.1 ? 9.0 : 1.8));
+      : (drive.steer * Dv.dir < -0.1 ? 9.0 : 0.25);
     vl *= Math.exp(-grip * dt);
     // 非漂移转向 = 官方动态轮胎力模型(L24237, 常数 L23407-23409):
     //   前轮滑移角 = δ - vr - wT, 后轮滑移角 = -vr + wT;
@@ -1078,8 +1092,13 @@ renderer.setAnimationLoop(() => { try {
         const d = drive.steer * (OFFICIAL.maxSteerDeg * Math.PI / 180)
                 * Math.exp(-v / OFFICIAL.steerConstraint) * Math.sign(vf);
         const vr = vl / v, wT = drive.yawRate * OFFICIAL.halfWheelbase / v;
-        const Ff = OFFICIAL.tireUe * 5 * (d - vr - wT);
-        const Fr = OFFICIAL.tireUe * 5 * (-vr + wT);
+        // 轮胎滑移饱和(标定 θ_sat=0.10rad≈5.7°): 线性模型无上限会让抓地满舵 5g 过弯,
+        // 官方"抓地跑很迟钝、不减速必撞墙"对应饱和后 a_max=2·ue·G·θ/m≈9.8m/s²
+        // (172km/h 抓地满舵半径≈180m)
+        const sf = Math.max(-0.10, Math.min(0.10, d - vr - wT));
+        const sr = Math.max(-0.10, Math.min(0.10, -vr + wT));
+        const Ff = OFFICIAL.tireUe * 5 * sf;
+        const Fr = OFFICIAL.tireUe * 5 * sr;
         vl += (Ff + Fr) / OFFICIAL.mass * h;
         drive.yawRate += OFFICIAL.halfWheelbase * (Ff - Fr) / (OFFICIAL.mass / OFFICIAL.yawInertiaDiv) * h;
         drive.heading += drive.yawRate * h;
@@ -1177,21 +1196,36 @@ renderer.setAnimationLoop(() => { try {
         D.pending += s * w;
       }
     }
-    // 漂移中: 车头横摆为主(方向键调漂移角), 速度方向以有限抓地跟随 -> 侧滑而不拐墙
+    // 漂移中: 车头横摆 + 低抓地侧滑(官方漂移分支轮胎力 ×driftSlipFactor=0.2, L24215)。
+    // **漂移状态不由 Shift 维持**(官方 drift-stop 只结束 activeDrift, 滑行分支继续);
+    // 结束条件 = 反向拉车头把滑角拉过零(L24242 正常分支接管)——反打时低抓地产生
+    // 强离心外滑, 弧线向外荡, 正确手法因此不撞墙。
     const drifting = D.phase === 'trigger' || D.phase === 'active' || D.phase === 'decay';
     if (drifting) {
-      // 横摆率: trigger 快(甩头) > active(漂移) > decay(尾滑); 方向键调节漂移紧/松
-      const steerMod = 1 + drive.steer * D.dir * (drive.newphys ? 0.4 : 0.7);
+      // 横摆率: 同向拉 = 加深漂移; **反向拉 = 车头被拉回(可越过速度方向, 系数>1)**
+      const steerMod = 1 + drive.steer * D.dir * 1.5;
       const base = D.phase === 'trigger' ? 1.2
                  : D.phase === 'active' ? 0.55 : 0.45;   // decay: 轻点漂移的 0.4s 滑行保持弧线(最佳化漂移)
       const yaw = D.dir * base * Math.min(1, Math.abs(drive.speed) / 15) * steerMod;
       drive.heading += yaw * dt;
-      // 漂移速度衰减: 官方侧滑摩擦持续消耗动能 —— 矢量模型中由 vl 抓地衰减自然涌现;
-      // 等效损耗率 = |v|·ω²/grip(grip=9×driftSlipFactor=1.8)。旧标量路径按同式显式衰减。
+      // 漂移速度衰减(用户判定"黄油在锅上打滑"= 损耗极小): 官方漂移轮胎力 ×0.2 后
+      // F≈98N, 滑移功率 F·(v·θ)/(m·v) ≈ 0.1 m/s² —— 此前 v·ω²/1.8 公式在 ω=0.8 时
+      // 达 17m/s², 放大 170 倍。按官方推导量级取 0.15 m/s²。
       if (!drive.newphys)
-        drive.speed -= Math.sign(drive.speed) * drive.speed * yaw * yaw / 1.8 * dt;
-      if (!SFX.drift && SFX.buffers.drift) SFX.drift = sfxPlay('drift', { loop: true, volume: 0.8 });
-      dropSkid();
+        drive.speed -= Math.sign(drive.speed) * 0.15 * dt;
+      // 滑角过零 = 反拉到位, 漂移消失(commit 集气 + 开小喷尾窗)
+      const slip = (drive.heading - drive.velDir) * D.dir;
+      if (D.phase !== 'trigger' && drive.speed > 3 && slip < 0) {
+        D.phase = 'none';
+        drive.gauge = Math.min(OFFICIAL.driftMaxGauge, drive.gauge + D.pending);
+        D.pending = 0;
+        drive.tailMs = 500;
+        for (const s of skids) s.last = null;
+        if (SFX.drift) { SFX.drift.stop(); SFX.drift = null; }
+      } else {
+        if (!SFX.drift && SFX.buffers.drift) SFX.drift = sfxPlay('drift', { loop: true, volume: 0.8 });
+        dropSkid();
+      }
     } else if (SFX.drift) {
       SFX.drift.stop(); SFX.drift = null;
       for (const s of skids) s.last = null;              // 漂移结束断带
@@ -1243,8 +1277,11 @@ renderer.setAnimationLoop(() => { try {
                 * Math.exp(-v / OFFICIAL.steerConstraint) * Math.sign(drive.speed);
         const vr = Math.sin(drive.heading - drive.velDir);
         const wT = drive.yawRate * OFFICIAL.halfWheelbase / v;
-        const Ff = OFFICIAL.tireUe * 5 * (d - vr - wT);
-        const Fr = OFFICIAL.tireUe * 5 * (-vr + wT);
+        // 滑移饱和同矢量分支(θ_sat=0.10)
+        const sf = Math.max(-0.10, Math.min(0.10, d - vr - wT));
+        const sr = Math.max(-0.10, Math.min(0.10, -vr + wT));
+        const Ff = OFFICIAL.tireUe * 5 * sf;
+        const Fr = OFFICIAL.tireUe * 5 * sr;
         drive.yawRate += OFFICIAL.halfWheelbase * (Ff - Fr) / (OFFICIAL.mass / OFFICIAL.yawInertiaDiv) * h;
         drive.heading += drive.yawRate * h;
         drive.velDir += (Ff + Fr) / (OFFICIAL.mass * v) * h * Math.sign(drive.speed);
