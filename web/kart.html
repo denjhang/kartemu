@@ -1288,10 +1288,10 @@ renderer.setAnimationLoop(() => { try {
       // 否则上次反拉残留的负滑角会让新漂移刚建立就被误判结束(集气 0 元凶)
       const slip = (drive.heading - drive.velDir) * D.dir;
       if (slip > 0.12) D.hadSlip = true;
-      // 改出阈值(滑块可调): 反向拉车头把滑角拉过 -阈值 才算改出;
-      // 此前过零即改出 -> 轻点漂移滑角稍一回落就消失, 出不来最佳化漂移
+      // 改出阈值(滑块可调): 滑角回落到阈值以下即改出 ——
+      // 阈值小 = 滑角要收得几乎归零才结束(难改出, 漂移黏); 阈值大 = 滑角稍降就结束(易改出)
       const exit = drive.exitThresh ?? 0.20;
-      if (D.phase !== 'trigger' && drive.speed > 3 && D.hadSlip && slip < -exit) {
+      if (D.phase !== 'trigger' && drive.speed > 3 && D.hadSlip && slip < exit) {
         D.phase = 'none';
         drive.gauge = Math.min(OFFICIAL.driftMaxGauge, drive.gauge + D.pending);
         D.pending = 0;
