@@ -203,35 +203,48 @@ document.querySelectorAll('input[name=cam]').forEach(r => r.onchange = e => {
 scene.add(new THREE.HemisphereLight(0xffffff, 0x445566, 2.0));
 // 草地+网格合一(单层不透明 shader): 远处线条淡出为纯草地,
 // 避免双平面远距 Z-fight 闪烁与网格摩尔纹; 手动雾(ShaderMaterial 不吃 scene.fog)
+// 网格用硬件重复平铺贴图(RepeatWrapping): GPU 采样零精度抖动(替代 shader fract,
+// fract 在世界坐标 ±5000 时 float 精度崩坏 = 闪烁/左右抖动的根因)
+const gridTex = (() => {
+  const c = document.createElement('canvas'); c.width = c.height = 128;
+  const g = c.getContext('2d');
+  g.fillStyle = '#5aa843';                                   // 草地 vec3(.353,.659,.263)
+  g.fillRect(0, 0, 128, 128);
+  g.strokeStyle = 'rgba(20, 71, 15, 0.95)';                  // 网格线 vec3(.08,.28,.06)
+  g.lineWidth = 4;
+  g.strokeRect(1, 1, 126, 126);                              // 单元格边线(2m 一格)
+  const t = new THREE.CanvasTexture(c);
+  t.wrapS = t.wrapT = THREE.RepeatWrapping;
+  t.colorSpace = THREE.SRGBColorSpace;
+  t.anisotropy = 8;
+  return t;
+})();
 const gridMesh = new THREE.Mesh(
   new THREE.PlaneGeometry(30000, 30000),
   new THREE.ShaderMaterial({
+    uniforms: { map: { value: gridTex } },
     vertexShader: `
       varying vec3 vWP;
-      varying vec2 vG;    // 相机吸附格点的相对坐标(数值小 -> fract 无 float 精度闪烁)
+      varying vec2 vG;    // 相机吸附格点的相对坐标(数值小 -> 采样 uv 无精度抖动)
       void main(){
         vec4 w = modelMatrix * vec4(position, 1.);
         vWP = w.xyz;
-        vec2 cs = floor(cameraPosition.xz / 2.) * 2.;   // 吸附到 2m 格点, 保持世界网格对齐
+        vec2 cs = floor(cameraPosition.xz / 2.) * 2.;   // 吸附到 2m 格点, 世界网格对齐不变
         vG = w.xz - cs;
         gl_Position = projectionMatrix * viewMatrix * w;
       }`,
     fragmentShader: `
+      uniform sampler2D map;
       varying vec3 vWP;
       varying vec2 vG;
       void main(){
-        // 雾距/线淡出必须用相机实时位置(cameraPosition 内置 uniform),
-        // 锚定固定点会导致开远后整片地面被画成 100% 雾色
+        // 雾距必须用相机实时位置(cameraPosition 内置 uniform)
         float d = length(vWP.xz - cameraPosition.xz);
-        // 网格用相机吸附相对坐标: vG = world - floor(cam/2)*2, 偏移为格点整数倍 -> fract 结果不变
-        vec2 c = vG / 2.;
-        vec2 g = abs(fract(c - .5) - .5) / fwidth(c);
-        float l = min(g.x, g.y);
-        float a = 1. - min(l, 1.);
-        float fade = 1. - smoothstep(40., 150., d);
-        vec3 grass = vec3(.353, .659, .263);
-        vec3 line  = vec3(.08, .28, .06);
-        vec3 col = mix(grass, line, a * fade);
+        // vG 为格点整数倍偏移的相对坐标 -> uv 平铺与世界网格严格对齐且无精度抖动
+        vec3 col = texture2D(map, vG / 2.).rgb;
+        // 网格可见距离 300m(远处淡出为纯草地), 之后由雾接管
+        float fade = 1. - smoothstep(60., 300., d);
+        col = mix(vec3(.353, .659, .263), col, fade);
         float fd = smoothstep(200., 400., d);
         col = mix(col, vec3(.7216, .8784, 1.), fd);
         gl_FragColor = vec4(col, 1.);
