@@ -1291,9 +1291,11 @@ renderer.setAnimationLoop(() => { try {
       const slip = (drive.heading - drive.velDir) * D.dir;
       if (slip > 0.12) D.hadSlip = true;
       // 改出阈值(滑块可调): 滑角回落到阈值以下即改出 ——
-      // 阈值小 = 滑角要收得几乎归零才结束(难改出, 漂移黏); 阈值大 = 滑角稍降就结束(易改出)
+      // 阈值小 = 滑角要收得几乎归零才结束(难改出, 漂移黏); 阈值大 = 滑角稍降就结束(易改出)。
+      // 正拉(同方向维持, steer·dir>0.3) = 延续漂移状态不改出; 反拉 = 加速滑角收缩改出
       const exit = drive.exitThresh ?? 0.20;
-      if (D.phase !== 'trigger' && drive.speed > 3 && D.hadSlip && slip < exit) {
+      const pulling = drive.steer * D.dir > 0.3;
+      if (D.phase !== 'trigger' && drive.speed > 3 && D.hadSlip && slip < exit && !pulling) {
         D.phase = 'none';
         drive.gauge = Math.min(OFFICIAL.driftMaxGauge, drive.gauge + D.pending);
         D.pending = 0;
