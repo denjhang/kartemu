@@ -1185,9 +1185,14 @@ renderer.setAnimationLoop(() => { try {
         ? drive.driftSens * Math.min(3, 1 + 1.5 * hold)
         : drive.driftSens;
       const steerMod = (1 + drive.steer * D.dir * 1.5) * sens;
-      const base = D.phase === 'trigger' ? 1.2
-                 : D.phase === 'active' ? 0.55 : 0.45;
-      const yaw = D.dir * base * Math.min(1, Math.abs(drive.speed) / 15) * steerMod;
+      // base 阶梯值平滑逼近(松油门/阶段切换时灵敏度不再突变)
+      const baseTgt = D.phase === 'trigger' ? 1.2
+                    : D.phase === 'active' ? 0.55 : 0.45;
+      if (D.baseSm === undefined) D.baseSm = baseTgt;
+      D.baseSm += (baseTgt - D.baseSm) * Math.min(1, 8 * dt);
+      // 速度因子加 0.35 下限: 低速仍有基本横摆响应(此前低于15m/s 线性直落=灵敏度断崖)
+      const yaw = D.dir * D.baseSm
+        * (0.35 + 0.65 * Math.min(1, Math.abs(drive.speed) / 15)) * steerMod;
       drive.heading += yaw * dt;
       // 速度衰减 = SHIFT衰减滑块(默认8%/s); v2 额外按住递增(每秒+8%, 上限25%)
       const decay = drive.driftMode === 'v2'
