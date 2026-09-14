@@ -576,7 +576,8 @@ addEventListener('keyup', e => { keys[e.key] = false; });
 const OFFICIAL = { mass: 100, forwardAccel: 2160, backwardAccel: 1775, airFriction: 3,
                    dragFactor: 0.75, gripBrake: 2070, slipBrake: 1415, boostAccelFactor: 1.494,
                    steerConstraint: 22.25, maxSteerDeg: 10, driftMaxGauge: 4300,
-                   cornerDrawFactor: 0.18, tireUe: 980, halfWheelbase: 0.5, yawInertiaDiv: 12 };
+                   cornerDrawFactor: 0.18, tireUe: 980, yawInertiaDiv: 12,
+                   halfWheelbase: 0.65 };   // 轴距 2×0.65=1.3(LocalTimeAttackParameters 行内 wheelBase=1.2999999)
 const drive = { speed: 0, steer: 0, heading: 0, boost: false, crashUntil: 0, time: 0, reversePhase: 'none', vy: 0,
   prevX: 0, prevZ: 0, prevLat: 0, airY: 0, routeHint: -1, model: 'official', velDir: 0, prevUp: false,
   newphys: false, vx: 0, vz: 0, yawRate: 0,   // yawRate: 横摆角速度(官方动态转向状态, rad/s)
@@ -1168,7 +1169,10 @@ renderer.setAnimationLoop(() => { try {
         const vlOld = Math.abs(drive.speed * Math.sin(drive.heading - drive.velDir));   // 侧向速度
         const vl = drive.newphys ? Math.abs(drive.slipVl || 0) : vlOld;
         D.elapsed += dt;
-        const s = vl * vl * dt;   // 官方原式(L24365), 无标度: 单位=v(米/秒), 满槽=driftMaxGauge 4300
+        // 官方原式 vl²·dt(L24365); k=官方内速单位标定(内速单位未知, 按
+        // "c1 5-6 次最佳化漂移集满 4300" 用户基准标定: 150km/h 强漂移(vl≈16,0.6s,w̄1.5)
+        // 单次 ≈ 16²·0.6·1.5·2.8 ≈ 645 ≈ 4300/6.7)
+        const s = vl * vl * dt * 2.8;
         const w = D.elapsed < 0.2 ? 3 : D.elapsed < 0.5 ? 1.5 : 1 / (2 * D.elapsed);
         D.pending += s * w;
       }
