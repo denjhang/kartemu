@@ -1195,7 +1195,7 @@ renderer.setAnimationLoop(() => { try {
     drive.prevShift = driftKey;
     if (shiftEdge && D.phase === 'none' && left !== right) {
       D.phase = 'trigger'; D.dir = left ? 1 : -1; D.timer = 0.2;
-      D.elapsed = 0; D.pending = 0; D.hadSlip = false;
+      D.elapsed = 0; D.pending = 0; D.hadSlip = false; D.sensBonus = 0;
       // 触发甩头: 新矢量模型不给瞬时踢角(会在高速下瞬间产生 ~20m/s 侧向速度=必然撞墙),
       // 甩头由下方 trigger 阶段的渐进横摆(0.2s 内 ~0.24rad)完成, 侧滑随抓地滞后自然建立
       drive.heading += D.dir * 0.28;   // 轻微甩头起漂(无此则点按无感)
@@ -1258,10 +1258,11 @@ renderer.setAnimationLoop(() => { try {
     if (drifting) {
       // 横摆: 漂移灵敏度滑块 × 模式3按住时长增益(按得越久越灵敏: ×(1+1.5×hold), 上限×3)
       const hold = D.phase === 'active' || D.phase === 'decay' ? D.elapsed : 0;
+      const sensBase = drive.driftSens * (1 + (D.sensBonus || 0));   // 滑块值 × Shift加成
       const sens = drive.driftMode === 'v3'
-        ? drive.driftSens * Math.min(3, 1 + 1.5 * hold)
-        : drive.driftSens;
-      const steerMod = (1 + drive.steer * D.dir * 1.5) * sens * (1 + 0.15 * (D.pumps || 0));
+        ? sensBase * Math.min(3, 1 + 1.5 * hold)
+        : sensBase;
+      const steerMod = (1 + drive.steer * D.dir * 1.5) * sens;
       // base 阶梯值平滑逼近(松油门/阶段切换时灵敏度不再突变)
       const baseTgt = D.phase === 'trigger' ? 1.2
                     : D.phase === 'active' ? 0.55 : 0.2;   // decay 滑行: 横摆减弱, 滑角缓慢自然衰减
@@ -1311,7 +1312,8 @@ renderer.setAnimationLoop(() => { try {
       // 二次 Shift(用户机制): 漂移中同方向再点 = 隐约调整漂移灵敏度(+15%/层, 最多4层);
       // 反方向再点 = 已有快拉(叠加反向横摆快速改出)
       if (shiftEdge && D.phase === 'active' && drive.steer * D.dir > 0.1)
-        D.pumps = Math.min(4, (D.pumps || 0) + 1);
+        D.sensBonus = Math.min(1.2, (D.sensBonus || 0) + 0.3);   // 每次同向点Shift: 灵敏度+30%
+      if (drive.steer * D.dir < -0.1) D.sensBonus = 0;           // 改方向清零加成
       // 滑角过零 = 反拉到位, 漂移消失(commit 集气 + 开小喷尾窗)。
       // hadSlip 锁存: 必须先真正甩出滑角(>0.12rad)才允许反拉结束,
       // 否则上次反拉残留的负滑角会让新漂移刚建立就被误判结束(集气 0 元凶)
@@ -1324,6 +1326,7 @@ renderer.setAnimationLoop(() => { try {
       const pulling = drive.steer * D.dir > 0.3;
       if (D.phase !== 'trigger' && drive.speed > 3 && D.hadSlip && slip < exit && !pulling) {
         D.phase = 'none';
+        D.sensBonus = 0;   // 改出清零灵敏度加成
         drive.gauge = Math.min(OFFICIAL.driftMaxGauge, drive.gauge + D.pending);
         D.pending = 0;
         drive.tailMs = 500;
