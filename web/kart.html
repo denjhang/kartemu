@@ -105,7 +105,10 @@
     <label>漂移模式 <select id="driftMode">
       <option value="legacy" selected>旧版漂移(对照)</option>
       <option value="v2">新漂移2(按住减速+弱小喷)</option>
+      <option value="v3">模式3(越按越灵敏)</option>
     </select></label>
+    <label>SHIFT衰减 <input id="shiftDecay" type="range" min="0" max="0.20" step="0.01" value="0.08">
+      <span id="shiftDecayV">0.08</span></label>
     <label>漂移灵敏度 <input id="driftSens" type="range" min="0.5" max="2" step="0.05" value="1">
       <span id="driftSensV">1.00</span></label>
     <label>转向灵敏度 <input id="steerSens" type="range" min="0.5" max="2" step="0.05" value="1">
@@ -618,7 +621,7 @@ const OFFICIAL = { mass: 100, forwardAccel: 2160, backwardAccel: 1775, airFricti
                    halfWheelbase: 0.65 };   // 轴距 2×0.65=1.3(LocalTimeAttackParameters 行内 wheelBase=1.2999999)
 const drive = { speed: 0, steer: 0, heading: 0, boost: false, crashUntil: 0, time: 0, reversePhase: 'none', vy: 0,
   prevX: 0, prevZ: 0, prevLat: 0, airY: 0, routeHint: -1, model: 'official', velDir: 0, prevUp: false,
-  driftMode: 'legacy', driftSens: 1, steerSens: 1, miniBoost: 1.3,   // 灵敏度滑块: 漂移横摆/转向角速度/小喷倍率
+  driftMode: 'legacy', driftSens: 1, steerSens: 1, miniBoost: 1.3, shiftDecay: 0.08,   // 滑块: 漂移横摆/转向角速度/小喷倍率/Shift按住衰减
   // 漂移/集气/喷气(kartspec id=1 speedType 竞速行: driftTrigTime .2s, driftMaxGauge 归一化为 1, 槽容量 2)
   drift: { phase: 'none', dir: 0, timer: 0, elapsed: 0, pending: 0, hadSlip: false },
   gauge: 0, slots: [-1, -1], item: 0,   // item: 道具槽图标 id(0=空; 道具系统未接入, 官方空槽即空相框)
@@ -691,6 +694,10 @@ document.getElementById('steerSens').oninput = e => {
 document.getElementById('miniBoost').oninput = e => {
   drive.miniBoost = parseFloat(e.target.value);
   document.getElementById('miniBoostV').textContent = drive.miniBoost.toFixed(2);
+};
+document.getElementById('shiftDecay').oninput = e => {
+  drive.shiftDecay = parseFloat(e.target.value);
+  document.getElementById('shiftDecayV').textContent = drive.shiftDecay.toFixed(2);
 };
 // 路线横向碰撞: |lat| 相对路缘 10.4 的跨越检测(跳起可越过), 详见渲染循环
 let kartRoot, rekart, handleChild, wheelChildren = [], mainAngle = 0;
@@ -1172,15 +1179,20 @@ renderer.setAnimationLoop(() => { try {
     //   点按 = 缓弯(前向大), 长按 = 急弯/U型(前向小), 转弯快慢不来自特殊转向属性。
     //   集气 vl²·dt 天然 ∝ 车速² 且随按住时长衰减(权重 3/1.5/1/(2t))。
     if (drifting) {
-      // 旧漂移(不同灵敏度, 6aeddeb 行为): 独立横摆率 + 8% 整速衰减 + velDir 跟随1.8
-      const steerMod = (1 + drive.steer * D.dir * 1.5) * drive.driftSens;
+      // 横摆: 漂移灵敏度滑块 × 模式3按住时长增益(按得越久越灵敏: ×(1+1.5×hold), 上限×3)
+      const hold = D.phase === 'active' || D.phase === 'decay' ? D.elapsed : 0;
+      const sens = drive.driftMode === 'v3'
+        ? drive.driftSens * Math.min(3, 1 + 1.5 * hold)
+        : drive.driftSens;
+      const steerMod = (1 + drive.steer * D.dir * 1.5) * sens;
       const base = D.phase === 'trigger' ? 1.2
                  : D.phase === 'active' ? 0.55 : 0.45;
       const yaw = D.dir * base * Math.min(1, Math.abs(drive.speed) / 15) * steerMod;
       drive.heading += yaw * dt;
-      // 衰减: legacy 恒定 8%/s; v2 按住递增(8% + 每秒+8%, 上限 25%/s) —— 长按急弯掉速更多
-      const hold = D.phase === 'active' ? D.elapsed : 0;
-      const decay = drive.driftMode === 'v2' ? Math.min(0.25, 0.08 + 0.08 * hold) : 0.08;
+      // 速度衰减 = SHIFT衰减滑块(默认8%/s); v2 额外按住递增(每秒+8%, 上限25%)
+      const decay = drive.driftMode === 'v2'
+        ? Math.min(0.25, drive.shiftDecay + 0.08 * hold)
+        : drive.shiftDecay;
       drive.speed -= Math.sign(drive.speed) * Math.abs(drive.speed) * decay * dt;
       drive.velDir = angleLerp(drive.velDir, drive.heading, 1 - Math.exp(-1.8 * dt));
     }
