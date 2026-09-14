@@ -194,3 +194,27 @@ MeshNormalMaterial 的碰撞测试障碍柱,非故障);index.html 赛道页正�
 - 浏览器缓存毒化: 验证时**必须带 cache-buster 参数或用 localhost 源**,
   否则测到的可能是旧缓存页面(2026-09-12 事故:127.0.0.1 纯 URL 命中
   早期实验页缓存, 页面从 CDN 拉 three.js 挂起, 黑屏误判为"代码坏了")。
+
+## 2026-09-13 物理参数重大勘误(speedType) + 漂移/转向手感轮
+
+- **kartspec.csv 每个 id 有两行: speedType=4 与 speedType=7, 字段几乎全同,
+  唯一关键区别是 driftMaxGauge: speedType=4 → 1(一次漂移即满, 特殊模式),
+  speedType=7 → 4300(正常竞速慢速集气)**。此前一直抓的 speedType=4 是错的,
+  导致"1 次漂移=1 条槽"的错误结论(用户纠正: kartemu 是正常竞速模式)。
+  **以后取 cotton1 参数一律用 speedType=7 行**。c1/speedType=7 关键值:
+  driftMaxGauge=4300, speedSlotCapacity=2, driftSlipFactor=0.2, driftTrigTime=0.2,
+  cornerDrawFactor=0.18, boostAccelFactor=1.494, normalBoosterTime=3000。
+- 集气已改为官方慢速公式(accumulateDriftGauge L24365): pending += vl²·dt,
+  权重前0.2s×3/0.5s内×1.5/之后÷(2t), 上限 4300, commit 后清零转 N2O 入槽。
+  vl=侧向速度(米/秒)。最佳化漂移(大侧滑)单次约 +700, 与"5-6 次集满"吻合。
+- **转向已换成官方动态轮胎力模型**(不再是稳态捷径/恒定角速度):
+  前后轮滑移角 δ∓vr∓wT, 力=ue(980)·G(5)·滑移角, 侧向 vl̇=(Ff+Fr)/m,
+  横摆 ω̇=Pr(Ff−Fr)/(m/12)(L24354 惯量=mass/12), δ=steer·10°·exp(−|v|/22.25),
+  cornerDraw(0.18) 转弯拖拽。常数 L23407(Pr=0.5)/L23409(ue=980)/L24859(expScale=1)。
+  **必须子步积分**(官方 L23845 dt≤0.002s; 实测 4ms 稳定, 16ms 数值发散会抽干速度)。
+- OFFICIAL 常量表已提升到 kart.html 模块顶层(updateTacho 也引用;
+  此前声明在渲染循环内导致每帧 ReferenceError→画面全黑, 已修)。
+- 最佳化漂移: Shift 按下沿触发(L17212), 轻点后松开仍走完整漂移(触发0.2s+滑行0.4s,
+  滑行横摆加强到 0.45 保持弧线); 集气窗在触发期结束打开。
+- 待办: 用户实测转向手感(满舵高速侧滑+cornerDraw 减速很猛属模型真实行为, 若偏离
+  官方手感再查轮胎饱和/抓地表 _s)。
