@@ -280,7 +280,7 @@ const ROUTE = await (await fetch('track/route.json')).json();
   for (const f of ROUTE.frames) f.p[1] = (f.p[1] - yMin) * 0.25;
 }
 const FR = ROUTE.frames;
-const ROAD_HALF = 10;                 // 路宽 20(官方门短边), 半宽 10
+const ROAD_HALF = 20;                 // 路宽 40(用户要求加宽一倍), 半宽 20
 // 路肩高程: |lat|<=10 为路面; 10~100 线性回落到草地
 function shoulderK(lat) {
   const a = Math.abs(lat);
@@ -626,6 +626,7 @@ const drive = { speed: 0, steer: 0, heading: 0, boost: false, crashUntil: 0, tim
   drift: { phase: 'none', dir: 0, timer: 0, elapsed: 0, pending: 0, hadSlip: false },
   gauge: 0, slots: [-1, -1], item: 0,   // item: 道具槽图标 id(0=空; 道具系统未接入, 官方空槽即空相框)
   state: 0, stateMs: 0, tailMs: 0 };
+window.__drive = drive;   // 调试句柄
 window.__drive = drive;
 window.__colliders = solidColliders;
 
@@ -699,7 +700,7 @@ document.getElementById('shiftDecay').oninput = e => {
   drive.shiftDecay = parseFloat(e.target.value);
   document.getElementById('shiftDecayV').textContent = drive.shiftDecay.toFixed(2);
 };
-// 路线横向碰撞: |lat| 相对路缘 10.4 的跨越检测(跳起可越过), 详见渲染循环
+// 路线横向碰撞: |lat| 相对路缘 ROAD_HALF+0.4 的跨越检测(跳起可越过), 详见渲染循环
 let kartRoot, rekart, handleChild, wheelChildren = [], mainAngle = 0;
 let mixer = null, accMixer = null, balloonT = 0, balloonNodeRef = null;
 let flames = [], obstacles = [];
@@ -950,8 +951,13 @@ function updateTacho() {
   gaugeNeedle.style.transform = 'rotate(' + gdeg + 'deg)';
 }
 
-// 碰撞反弹: 按系数翻标量速度
-function bounceVel(k) { drive.speed *= k; }
+// 碰撞反弹: 翻标量速度, 并恢复方向控制 —— 泄放横摆动量(×0.2) +
+// 消除侧滑(velDir 对齐车头), 否则撞墙后短时间车不听方向(用户实测)
+function bounceVel(k) {
+  drive.speed *= k;
+  drive.yawRate = (drive.yawRate || 0) * 0.2;
+  drive.velDir = drive.heading;
+}
 
 // 排气粒子常开更新: 官方 ReExhaustEffect 语义(deob L8209-8301)
 function updateExhaust(dt) {
@@ -1086,8 +1092,9 @@ renderer.setAnimationLoop(() => { try {
       // 小喷倍率 = 滑块(默认1.3, 官方公式 1.494 参照); 大喷恒为官方 boostAccelFactor
       const boostMul = drive.state === 3 ? OFFICIAL.boostAccelFactor
                      : drive.state === 2 ? drive.miniBoost : 1;
-      // 漂移 = "半油门"(用户模型: 漂移减速感同松油门过弯; 滑移功消耗推力)
-      const driftThrustMul = drifting ? 0.5 : 1;
+      // 漂移 = 全滑行(用户实测: 按住 shift 速度应持续衰减到 0, 不应有半油门平衡点;
+      // 侧滑摩擦功在漂移中完全抵消推力)
+      const driftThrustMul = drifting ? 0 : 1;
       a += OFFICIAL.forwardAccel * boostMul * driftThrustMul / OFFICIAL.mass;
     }
     if (down) {
@@ -1316,13 +1323,13 @@ renderer.setAnimationLoop(() => { try {
   // 路外可自由走动不抽风; 空格跳起(离地>0.9)可跨越
   if (kartRoot) {
     const p = kartRoot.position;
-    // 围栏碰撞: 车到中心线折线的垂直距离(routeDist)跨越 10.4 即拦; 跳起可越
+    // 围栏碰撞: 车到中心线折线的垂直距离(routeDist)跨越 路缘+0.4 即拦; 跳起可越
     const rd = routeDist(p.x, p.z, drive.routeHint);
     drive.routeHint = rd.i;
     let snapped = false;
     if (drive.airY < 0.9) {
       const dNow = rd.dist, dPrev = Math.abs(drive.prevLat);
-      if (Number.isFinite(dPrev) && (dNow > 10.4) !== (dPrev > 10.4)) {
+      if (Number.isFinite(dPrev) && (dNow > ROAD_HALF + 0.4) !== (dPrev > ROAD_HALF + 0.4)) {
         p.x = drive.prevX; p.z = drive.prevZ;
         bounceVel(-0.3);
         snapped = true;
@@ -1334,7 +1341,7 @@ renderer.setAnimationLoop(() => { try {
     }
     drive.prevX = p.x; drive.prevZ = p.z;
     // 弹回后必须把参照距离重置为"内侧", 否则过期的外侧距离会让回弹被误判为再次穿越(速度每帧翻转, 蹭出围栏)
-    drive.prevLat = snapped ? 10.3 : rd.dist;
+    drive.prevLat = snapped ? ROAD_HALF + 0.3 : rd.dist;
     // 地面高程跟随: 路面/堤岸/草地
     p.y = routeGroundY(p.x, p.z, rd.i) + drive.airY;
     // 场景碰撞体(树/房, 全高度实体): 圆近似推挤
