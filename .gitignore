@@ -40,6 +40,7 @@ web/kart/
 web/character/
 web/tacho/
 web/sfx/
+web/slot/
 
 # ---- 其它 ----
 __pycache__/

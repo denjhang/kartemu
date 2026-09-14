@@ -1115,3 +1115,59 @@ Port0/FirePort0/... 属性;attachmentNodes = 按名字在模型树找节点。
   **观感修正(用户判定白雾太夸张)**: 官方贴图未解包导致最初用实心白核渐变代替+alpha×2.2 补偿,
   additive 叠成"大灯泡"。改为淡灰低不透明度径向雾(rgba(190,190,195,.55)→0),
   color 属性 0.78 灰(非纯白), alpha 用官方原值 125/255→0 无补偿 —— 轻微少量灰色废气。
+
+## 37. 漂移手感三连修(2026-09-13, 官方源码逐条对齐)
+- **松油门不停(用户判定)**: 我此前发明的"漂移中速度x(1-0.22/s)衰减"官方没有 —— 已删除。
+  官方 applyLongitudinal(L24130): 松油门只是无推力, 减速仅靠 applyDrag 阻力; 矢量模型中
+  侧滑能量损失由 vl 抓地衰减天然承担。实测: 漂移中松油门 39km/h 持续滑行。
+- **任意速度可漂移**: 官方 drift-start(L23579) 只要求 driftDecay<=0, 无速度门槛/不要求油门。
+  已删除 speed>3 与 up 门槛。
+- **集气机制重写**: 官方 L24361-24364: cotton1 driftMaxGauge===1 分支直接 pendingGauge=1,
+  不是 v² 积分! 集气窗在触发期(0.2s)完成后才打开(L24203), 漂移结束 commit 入槽;
+  倒车不集气(L24359); 未完成触发的短 tap 得 0。删除我原来的 dt*v²*0.0016*w 公式。
+- **小喷对齐官方**: driftLifecycleB50=0.5s 尾窗在"松漂移且油门松开"时开启(L24257),
+  窗内 forward-down 边沿 -> physicsState=2 持续 0.5s(L23591), 倍率=boostAccelFactor(1.494)
+  (L24134-24138: state1..11 均 1.494, state2 再 xdriftBoostMulAccelFactor=1) —— 非我原写的 1.2。
+  forward-up 取消喷气状态(L23593)已实现。
+- **漂移抓地**: 官方 L24215 漂移中侧向力 xdriftSlipFactor(0.2) -> 矢量模型漂移 grip 9->1.8/s;
+  反打方向恢复 9。
+
+## 38. 集气槽/道具槽 官方原版 UI(2026-09-13)
+- **素材源**: mirror/p3528/item.rho -> item/slot/{slot_template.bml, slot_frameResource.bml,
+  slot.png(256x128), item6.png(84x84)}; 解包到 unpacked/item/(已 gitignore), 引用副本 web/slot/。
+- **槽规格(slot_template.bml)**: type1 备用槽 72x72 uv(0,0); type2 当前槽 92x92 uv(72,0);
+  itemNumPanel/adjustValue=4 -> 槽内图标内缩4px(item6 84x84 正好=92-2x4, 备用槽缩到64x64)。
+- **相框(slot_frameResource.bml)**: cotton 车 -> pT()="normal" -> texture slot.png。
+- **布局(deob fT L12135)**: x = 24 + (n-1-i)*82, y=24 同顶对齐; idx0='current'(右侧大格)。
+  两槽时: 备用 x=24..96, 当前 x=106..198, 间隙 10px。
+- **官方语义**: 空槽相框印 "Ctrl" 键帽(提示使用键); 满槽叠 item6 氮气图标。
+  道具槽同 type2 相框 + 道具图标(item1.png=水弹 84x84), 官方竞速模式为 boost-only 槽(L12138)。
+- **集气指针**: 官方 boostHand Graduation(minDeg50 maxDeg360 量程0-350), 显示
+  min(cap, committedGauge+pendingGauge)/cap(L24668) —— 已改为此公式。
+- 删除自造的绿色 #gaugebar 与 CSS 方块 #slots。
+
+## 39. 跟随相机改刚性(2026-09-13, 用户判定"越快越远"非官方机制)
+- 根因: 相机位置用一阶弹簧 lerp(desired, 1-exp(-8dt)) —— 跟随匀速目标存在稳定拖尾误差 ≈ 速度/8,
+  45m/s 时约 5.6m, 表现为速度越快车离相机越远。官方追逐相机为刚性锁定, 无位置弹簧。
+- 修复: 跟随模式每帧直接 camera.position = desired, target 钉在车上; 鼠标偏移/滚轮距离保留。
+  **用户判定(2026-09-13): 官方并非完全刚性, 刚性实现已退回弹簧方案。**
+  正确方向应是"有限拖尾": 高速时距离略增但有上限(官方为轻阻尼跟随, 非零滞后也非纯弹簧),
+  待后续从 driveCameraman 系统逆向出具体阻尼参数再改。
+
+## 40. 转向角速度官方化 + 最佳化漂移 + 官方集气槽(2026-09-13)
+- **普通转弯过快根因**: 旧路径用恒定 steerRate=3 rad/s(速度>4 即满速率, 半径仅15m@162km/h);
+  矢量路径轴距用了假设值1.3。官方证据: 前后轮力矩平衡(deob L24237) => 稳态 ω = δ·v/(2·Pr),
+  **Pr=0.5(L23407) => 轴距 1.0**; δ = steer·10°·exp(-|v|/22.25); ue=980(L23409)为轮胎力标度;
+  瞬态由轮胎力矩动态建立(时间常数≈v/204 s)。三条路径(旧official/测试/矢量)已统一为官方稳态公式。
+- **最佳化漂移(用户指出)**: 官方 updateDriftChord(L17187/L17212) Shift 为按下沿一次性触发
+  (driftPressCount++, 方向=按下时 rawSteer), 不需按住; 松开只发 drift-stop。
+  已改为 shiftEdge 触发; 触发期照常走完并开集气窗。
+- **漂移横摆率下调(用户判定撞墙根因)**: trigger 1.75/1.6 -> 1.2, active 0.95/1.1 -> 0.55,
+  decay 0.5 -> 0.25; steerMod 0.6/1.1 -> 0.4/0.7; 旧路径瞬时踢角 0.45 -> 0.28 rad。
+  (官方漂移无显式横摆项, 由 driftSlipFactor 前后轮不对称产生; 本组为近似参数, 待精调)
+- **官方集气槽**: stage_speedIndiGame.rho boostGauge.bml(mqBoost) —— 底板 n2o_solo.png(198x26,
+  align bottom;hcenter, adjust 0 70), 填充区 leftTopWH 44,7 147x12(n2o_solo_bar, 实宽146),
+  游标 marker n2o_solo_marker.png(8x22, top 2), 满槽高亮 n2o_solo_full.png。
+  ratio = min(cap, committed+pending)/cap(L24668)。已实现于 #boostGauge(屏幕底部居中)。
+- **道具槽乌云图标移除(用户判定无中生有)**: item1.png 实为乌云, 系未核实误放; 道具系统未接入前
+  道具槽保持官方空槽(空相框)。

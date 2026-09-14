@@ -11,7 +11,7 @@
   #tacho .hand { position: absolute; left: 26px; top: 76px; width: 55px; height: 10px;
                  background: url('tacho/cotton.png') no-repeat; background-position: -284px -113px;
                  transform-origin: 54px 4px; }
-  #tacho .boost { position: absolute; left: 162px; top: 23px; width: 42px; height: 26px;
+  #tacho .boost { position: absolute; left: 162px; top: 23px; width: 43px; height: 26px;
                   background: url('tacho/cotton.png') no-repeat; }
   #tacho .boost.off { background-position: -284px 0; }
   #tacho .boost.on  { background-position: -284px -26px; }
@@ -20,16 +20,42 @@
   #gaugeHand { position: absolute; left: 162px; top: 10px; width: 50px; height: 50px; }
   #gaugeNeedle { position: absolute; left: 23px; top: 24px; width: 4px; height: 2px;
                  background: url('tacho/mask.png') no-repeat; background-position: -2px 0; }
-  #gaugebar { position: fixed; right: 18px; bottom: 216px; width: 249px; height: 10px;
-              background: rgba(10,14,20,.55); border-radius: 3px; overflow: hidden; }
-  #gaugebar i { display: block; height: 100%; width: 0%;
-                background: linear-gradient(90deg, #4c4, #b8e04a); }
-  #slots { position: fixed; right: 18px; bottom: 232px; display: flex; gap: 4px; }
-  #slots .slot { width: 34px; height: 18px; border-radius: 3px; background: rgba(10,14,20,.55);
-                 border: 1px solid #3a4a3a; color: #6f8; font: bold 11px/18px monospace;
-                 text-align: center; }
-  #slots .slot.full { background: #123c14; color: #8f8; border-color: #4c4; }
-  #tachoHint { position: fixed; right: 18px; bottom: 190px; color: #9ab; font: 11px monospace;
+  /* 官方槽位 UI: item.rho slot/slot_template.bml(备用72x72 uv0,0 / 当前92x92 uv72,0)
+     + slot_frameResource.bml(normal=slot.png) + fT 布局(deob L12135: x=24+(n-1-i)*82, y=24, 同顶对齐)
+     氮气图标 item6.png(84x84, 槽内缩 adjustValue=4) */
+  #slotbar { position: fixed; right: 18px; bottom: 199px; width: 198px; height: 92px;
+             user-select: none; pointer-events: none; }
+  #slotbar .fslot { position: absolute; top: 0; background: url('slot/slot.png') no-repeat; }
+  #slotbar .reserve { left: 0; width: 72px; height: 72px; background-position: 0 0; }
+  #slotbar .current { left: 106px; width: 92px; height: 92px; background-position: -72px 0; }
+  #slotbar .nitro { position: absolute; left: 4px; top: 4px; display: none;
+                    background: url('slot/item6.png') no-repeat; }
+  #slotbar .current .nitro { width: 84px; height: 84px; }
+  #slotbar .reserve .nitro { width: 64px; height: 64px; background-size: 64px 64px; }
+  #slotbar .full .nitro { display: block; }
+  /* 道具槽: 同 slot_template type2 相框; 道具系统未接入 -> 保持官方空槽(空相框) */
+  #itemSlot { position: fixed; right: 228px; bottom: 199px; width: 92px; height: 92px;
+              background: url('slot/slot.png') no-repeat; background-position: -72px 0;
+              user-select: none; pointer-events: none; }
+  #itemSlot .icon { position: absolute; left: 4px; top: 4px; width: 84px; height: 84px;
+                    display: none; }
+  #itemSlot.has .icon { display: block; }
+  /* 官方集气槽: stage_speedIndiGame.rho boostGauge.bml(mqBoost)
+     底板 n2o_solo.png(198x26, align bottom;hcenter, adjust 0 70);
+     gauge 填充区 leftTopWH 44,7 147x12 (uvRect 44,7-190,19 -> 实宽146);
+     marker 左右游标 n2o_solo_marker.png(8x22, leftTopTex 0,2); 满槽高亮 n2o_solo_full.png */
+  #boostGauge { position: fixed; left: 50%; bottom: 70px; transform: translateX(-50%);
+                width: 198px; height: 26px; background: url('slot/n2o_solo.png') no-repeat;
+                user-select: none; pointer-events: none; }
+  #boostGauge .fill { position: absolute; left: 44px; top: 7px; height: 12px; width: 0;
+                      max-width: 146px; background: url('slot/n2o_solo_bar.png') no-repeat;
+                      background-position: -44px -7px; }
+  #boostGauge .marker { position: absolute; top: 2px; width: 8px; height: 22px;
+                        background: url('slot/n2o_solo_marker.png') no-repeat; }
+  #boostGauge .fullov { position: absolute; inset: 0; display: none;
+                        background: url('slot/n2o_solo_full.png') no-repeat; }
+  #boostGauge.full .fullov { display: block; }
+  #tachoHint { position: fixed; right: 18px; bottom: 175px; color: #9ab; font: 11px monospace;
                text-shadow: 0 0 4px #000; }
   #ui { position: fixed; left: 12px; top: 12px; color: #fff; font: 13px/1.7 monospace;
         text-shadow: 0 1px 2px #000; user-select: none; }
@@ -54,8 +80,12 @@
     <div class="digit" id="kmh-1"></div>
     <div class="digit" id="kmh-2"></div>
   </div>
-  <div id="gaugebar"><i id="gaugefill"></i></div>
-  <div id="slots"><div class="slot">N2O</div><div class="slot">N2O</div></div>
+  <div id="slotbar">
+    <div class="fslot reserve"><i class="nitro"></i></div>
+    <div class="fslot current"><i class="nitro"></i></div>
+  </div>
+  <div id="itemSlot"><i class="icon"></i></div>
+  <div id="boostGauge"><i class="fill"></i><i class="marker"></i><i class="fullov"></i></div>
   <div id="tachoHint">tacho: cotton 官方皮肤 1:1(表盘 0-375km/h) · Shift 漂移集气 · Ctrl 大喷 · 尾窗内松油再踩=连喷</div>
   <div>转向 <input id="steer" type="range" min="-1" max="1" step="0.01" value="0">
        <span id="steerV">0.00</span>
@@ -382,7 +412,7 @@ const skids = [0, 1].map(() => {
   return { pos, mesh: m, head: 0, last: null };
 });
 function dropSkid() {
-  if (!kartRoot || drive.speed < 5 || kartRoot.position.y > 0.9) {
+  if (!kartRoot || Math.abs(drive.speed) < 2 || kartRoot.position.y > 0.9) {
     for (const s of skids) s.last = null;                // 条带中断
     return;
   }
@@ -546,7 +576,7 @@ const drive = { speed: 0, steer: 0, heading: 0, boost: false, crashUntil: 0, tim
   newphys: false, vx: 0, vz: 0,   // 新矢量模型(实验): 世界速度向量; newphys=false 走旧标量路径
   // 漂移/集气/喷气(kartspec id=1 speedType 竞速行: driftTrigTime .2s, driftMaxGauge 归一化为 1, 槽容量 2)
   drift: { phase: 'none', dir: 0, timer: 0, elapsed: 0, pending: 0 },
-  gauge: 0, slots: [-1, -1],
+  gauge: 0, slots: [-1, -1], item: 0,   // item: 道具槽图标 id(0=空; 道具系统未接入, 官方空槽即空相框)
   state: 0, stateMs: 0, tailMs: 0 };
 window.__drive = drive;
 window.__colliders = solidColliders;
@@ -820,14 +850,26 @@ const tachoHand = document.getElementById('tacho-hand');
 const tachoDigits = [0, 1, 2].map(i => document.getElementById('kmh-' + i));
 const tachoBoost = document.querySelector('#tacho .boost');
 const gaugeNeedle = document.getElementById('gaugeNeedle');
-const slotEls = document.querySelectorAll('#slots .slot');
-const gaugeFill = document.getElementById('gaugefill');
+const slotEls = document.querySelectorAll('#slotbar .fslot');   // [reserve, current] -> drive.slots[1], [0]
+const itemSlotEl = document.getElementById('itemSlot');
+const boostGaugeEl = document.getElementById('boostGauge');
+const boostGaugeFill = document.querySelector('#boostGauge .fill');
+const boostGaugeMarker = document.querySelector('#boostGauge .marker');
 let tachoKey = '';
 function updateTacho() {
-  // 槽位/集气条/喷气灯不参与 key 缓存(cheap class 赋值, 每帧刷新)
-  slotEls.forEach((el, i) => el.className = 'slot' + (drive.slots[i] === 6 ? ' full' : ''));
-  gaugeFill.style.width = (Math.min(1, drive.gauge) * 100).toFixed(1) + '%';
+  // 槽位: DOM 顺序 [reserve, current], drive.slots[0]=当前槽(右侧大格, 官方 fT idx0='current')
+  slotEls.forEach(el => {
+    const cur = el.classList.contains('current');
+    el.classList.toggle('full', drive.slots[cur ? 0 : 1] === 6);
+  });
+  itemSlotEl.classList.toggle('has', (drive.item | 0) > 0);
   tachoBoost.className = 'boost ' + (drive.boost ? 'on' : 'off');
+  // 官方集气槽(boostGauge.bml): ratio = min(cap, committed+pending)/cap(L24668)
+  // gauge 填充 146px, marker 游标在填充前沿, 满槽显示 n2o_solo_full 高亮层
+  const ratio = Math.min(1, drive.gauge + drive.drift.pending);
+  boostGaugeFill.style.width = (ratio * 146).toFixed(1) + 'px';
+  boostGaugeMarker.style.left = (44 + ratio * 146 - 4).toFixed(1) + 'px';
+  boostGaugeEl.classList.toggle('full', ratio >= 1);
   const kmh = Math.trunc(Math.abs(drive.speed) * 3.6);
   const key = kmh + (drive.boost ? 'b' : '');
   if (key === tachoKey) return;
@@ -844,7 +886,8 @@ function updateTacho() {
     tachoDigits[i].style.backgroundPosition = (-(d * 22)) + 'px -170px';
   }
   // 集气指针(官方 Graduation boostHand: minDegree=50 maxDegree=360, 表量程 0~350)
-  const gdeg = 50 + Math.min(1, drive.gauge) * 310;
+  // 显示值 = committedGauge + pendingGauge(deob L24668: min(cap, committed+pending)/cap)
+  const gdeg = 50 + Math.min(1, drive.gauge + drive.drift.pending) * 310;
   gaugeNeedle.style.transform = 'rotate(' + gdeg + 'deg)';
 }
 
@@ -994,7 +1037,7 @@ renderer.setAnimationLoop(() => { try {
     let vf = drive.vx * fx + drive.vz * fz;
     let vl = drive.vx * rx + drive.vz * rz;
     if (drive.model === 'official') {
-      const boostMul = drive.state === 3 ? OFFICIAL.boostAccelFactor : drive.state === 2 ? 1.2 : 1;
+      const boostMul = drive.state === 3 || drive.state === 2 ? OFFICIAL.boostAccelFactor : 1;   // 官方: state1..11 均 boostAccelFactor(L24134), state2 再x1
       let a = 0;
       if (up) a += OFFICIAL.forwardAccel * boostMul / OFFICIAL.mass;
       if (down) {
@@ -1012,15 +1055,16 @@ renderer.setAnimationLoop(() => { try {
       else { vf *= 1 - 1.2 * dt; if (Math.abs(vf) < 0.15) vf = 0; }
     }
     const Dv = drive.drift, drifting = Dv.phase !== 'none';
-    if (drifting) vf *= 1 - (Dv.phase === 'decay' ? 0.12 : 0.22) * dt;   // 漂移阻力(与旧路径同参数)
-    // 侧向抓地: 正常 9.0/s, 漂移 4.5/s(driftSlipFactor 语义); 反打方向(反甩头)时加倍拉直
+    // 官方 L24215: 漂移中前后轮侧向力 ×driftSlipFactor(0.2) -> 漂移抓地 = 20%正常(1.8/s);
+    // 反打方向(反甩头)恢复正常抓地拉直; trigger 阶段 ×driftTrigFactor(0.2) 同级
     const grip = !drifting ? 9.0
-      : (drive.steer * Dv.dir < -0.1 ? 9.0 : 4.5);
+      : (Dv.phase !== 'active' ? 1.8 : (drive.steer * Dv.dir < -0.1 ? 9.0 : 1.8));
     vl *= Math.exp(-grip * dt);
-    // 非漂移转向 = 官方自行车模型(10°, exp(-|vf|/22.25), 轴距1.3); 漂移横摆由漂移状态机接管
+    // 非漂移转向 = 官方稳态转向(deob L24237+L23407): ω = δ·vf/(2·Pr), Pr=0.5 -> 轴距 1.0;
+    // δ = steer·10°·exp(-|vf|/22.25)。漂移横摆由漂移状态机接管
     if (!drifting && Math.abs(vf) > 0.1) {
       const angle = drive.steer * (10 * Math.PI / 180) * Math.exp(-Math.abs(vf) / OFFICIAL.steerConstraint);
-      drive.heading += Math.abs(vf) * Math.tan(angle) / 1.3 * dt * Math.sign(vf);
+      drive.heading += Math.abs(vf) * Math.tan(angle) / 1.0 * dt * Math.sign(vf);
     }
     drive.vx = fx * vf + rx * vl;
     drive.vz = fz * vf + rz * vl;
@@ -1031,8 +1075,8 @@ renderer.setAnimationLoop(() => { try {
   } else if (drive.model === 'official') {
     let a = 0;
     if (up) {
-      const boostMul = drive.state === 3 ? OFFICIAL.boostAccelFactor
-                     : drive.state === 2 ? 1.2 : 1;
+      const boostMul = drive.state === 3 || drive.state === 2 ? OFFICIAL.boostAccelFactor
+                     : 1;   // 官方: state1..11 均 boostAccelFactor(L24134), state2 再x1
       a += OFFICIAL.forwardAccel * boostMul / OFFICIAL.mass;
     }
     if (down) {
@@ -1059,19 +1103,29 @@ renderer.setAnimationLoop(() => { try {
   {
     const D = drive.drift;
     const driftKey = keys['Shift'];
-    if (driftKey && up && D.phase === 'none' && drive.speed > 3 && left !== right) {
+    // 官方 updateDriftChord(L17187/L17212): Shift 是"按下沿一次性触发"——按下瞬间方向键!=0
+    // 就发出一次 drift-start(direction=当时方向), 不需要按住; 松开只发 drift-stop。
+    // 这就是"最佳化漂移": 轻点一下 Shift 即开始完整漂移(触发期+集气+滑行)。
+    // handleDrivingCommand(L23579): 仅要求 driftDecay<=0, 无速度门槛/不要求油门。
+    const shiftEdge = driftKey && !drive.prevShift;
+    drive.prevShift = driftKey;
+    if (shiftEdge && D.phase === 'none' && left !== right) {
       D.phase = 'trigger'; D.dir = left ? 1 : -1; D.timer = 0.2;
       D.elapsed = 0; D.pending = 0;
       // 触发甩头: 新矢量模型不给瞬时踢角(会在高速下瞬间产生 ~20m/s 侧向速度=必然撞墙),
-      // 甩头由下方 trigger 阶段的渐进横摆(0.2s 内 ~0.35rad)完成, 侧滑随抓地滞后自然建立
-      if (!drive.newphys) drive.heading += D.dir * 0.45;
+      // 甩头由下方 trigger 阶段的渐进横摆(0.2s 内 ~0.24rad)完成, 侧滑随抓地滞后自然建立
+      if (!drive.newphys) drive.heading += D.dir * 0.28;
     }
     if (D.phase === 'trigger') {
       D.timer -= dt;
-      if (D.timer <= 0) D.phase = driftKey ? 'active' : 'decay';
-      if (!driftKey) { D.phase = 'decay'; D.decay = 0.4; }
+      if (D.timer <= 0) {
+        // 官方 L24203: 触发期结束即打开集气窗(与 Shift 是否仍按住无关——轻点也给满);
+        // cotton1 driftMaxGauge===1 -> pendingGauge=1(L24361); 倒车不集气(L24359)
+        D.phase = driftKey ? 'active' : 'decay';
+        if (drive.speed >= 0) D.pending = 1;
+      }
     } else if (D.phase === 'active') {
-      if (!driftKey) { D.phase = 'decay'; D.decay = 0.4; if (D.elapsed > 0.3) drive.tailMs = 500; }   // 官方 driftLifecycleB50 尾窗
+      if (!driftKey) { D.phase = 'decay'; D.decay = 0.4; drive.tailMs = 500; }   // 官方 B50 尾窗: 松漂移且油门松开(下方 upEdge 判定小喷)
     } else if (D.phase === 'decay') {
       D.decay -= dt;
       if (D.decay <= 0 || drive.speed < 3) {
@@ -1089,16 +1143,11 @@ renderer.setAnimationLoop(() => { try {
     if (drifting) {
       // 横摆率: trigger 快(甩头) > active(漂移) > decay(尾滑); 方向键调节漂移紧/松
       // 新矢量模型: active 基准略降(0.95), 反打方向时抓地加倍拉直(见矢量分支)
-      const steerMod = 1 + drive.steer * D.dir * (drive.newphys ? 0.6 : 1.1);
-      const base = D.phase === 'trigger' ? (drive.newphys ? 1.75 : 1.6)
-                 : D.phase === 'active' ? (drive.newphys ? 0.95 : 1.1) : 0.5;
-      drive.heading += D.dir * base * Math.min(1, drive.speed / 15) * steerMod * dt;
-      if (!drive.newphys) drive.speed *= 1 - (D.phase === 'decay' ? 0.12 : 0.22) * dt;   // 新矢量模型在矢量分支内衰减 vf
-      if (D.phase !== 'decay') {
-        D.elapsed += dt;
-        const w = D.elapsed < 0.2 ? 3 : D.elapsed < 0.5 ? 1.5 : 1 / (2 * D.elapsed);
-        D.pending += dt * (drive.speed * drive.speed) * 0.0016 * w;
-      }
+      const steerMod = 1 + drive.steer * D.dir * (drive.newphys ? 0.4 : 0.7);
+      const base = D.phase === 'trigger' ? 1.2
+                 : D.phase === 'active' ? 0.55 : 0.25;
+      drive.heading += D.dir * base * Math.min(1, Math.abs(drive.speed) / 15) * steerMod * dt;
+      // 官方无"漂移 blanket 减速": 松油门只失去推力, 减速=阻力+侧滑摩擦(矢量模型里 vl 衰减即能量损失)
       if (!SFX.drift && SFX.buffers.drift) SFX.drift = sfxPlay('drift', { loop: true, volume: 0.8 });
       dropSkid();
     } else if (SFX.drift) {
@@ -1123,10 +1172,12 @@ renderer.setAnimationLoop(() => { try {
       drive.state = 3; drive.stateMs = 3000;
       sfxPlay('booster', { volume: 0.9 });
     }
-    const upEdge = up && !drive.prevUp;                 // 油门重按边沿(官方 forward-down)
+    const upEdge = up && !drive.prevUp;                 // 油门重按边沿(官方 forward-down L23591)
     drive.prevUp = up;
+    // 官方 forward-up(L23593): 松油门取消喷气状态(大喷/小喷都断)
+    if (!up && drive.state !== 0) { drive.state = 0; drive.stateMs = 0; }
     if (upEdge && drive.tailMs > 0 && drive.state === 0) {
-      drive.state = 2; drive.stateMs = 500; drive.tailMs = 0;   // 连喷: 尾窗内重踩油门
+      drive.state = 2; drive.stateMs = 500; drive.tailMs = 0;   // 官方B50尾窗内重踩油门=小喷0.5s
       sfxPlay('boosterDrift', { volume: 0.9 });
     }
     drive.tailMs = Math.max(0, drive.tailMs - dt * 1000);
@@ -1135,18 +1186,21 @@ renderer.setAnimationLoop(() => { try {
   drive.steer += (steerTarget - drive.steer) * Math.min(1, 8 * dt);
   const driftingNow = drive.drift.phase !== 'none';
   if (drive.newphys) {
-    // 新矢量模型: 转向已在矢量分支(自行车模型/漂移横摆); 侧滑超阈值补轮胎印
+    // 新矢量模型: 转向已在矢量分支(稳态转向/漂移横摆); 侧滑超阈值补轮胎印
     if (Math.abs(drive.slipVl || 0) > 3 && Math.abs(drive.speed) > 4) dropSkid();
   } else if (drive.model === 'official' && !driftingNow) {
-    // 官方自行车模型(漂移中由漂移横摆接管): 转向角 = steer*10deg*exp(-|v|/22.25)
+    // 官方稳态转向(deob L24237+L23407): 前/后轮力矩平衡 => ω = δ·v/(2·Pr), Pr=0.5(轴距1.0);
+    // δ = steer·10°·exp(-|v|/22.25)。旧实现恒定3rad/s(半径15m@162km/h)是转弯过快根因。
     const maxRad = 10 * Math.PI / 180;
     const angle = drive.steer * maxRad * Math.exp(-Math.abs(drive.speed) / OFFICIAL.steerConstraint);
     if (Math.abs(drive.speed) > 0.1)
-      drive.heading += Math.abs(drive.speed) * Math.tan(angle) / 1.3 * dt * Math.sign(drive.speed);
+      drive.heading += Math.abs(drive.speed) * Math.tan(angle) / 1.0 * dt * Math.sign(drive.speed);
   } else if (!driftingNow) {
-    const steerEff = Math.min(1, Math.abs(drive.speed) / 4);
+    // 测试模型同样套用官方稳态转向角(原来恒定 steerRate=3 rad/s 过快)
+    const maxRad = 10 * Math.PI / 180;
+    const angle = drive.steer * maxRad * Math.exp(-Math.abs(drive.speed) / OFFICIAL.steerConstraint);
     if (Math.abs(drive.speed) > 0.1)
-      drive.heading += drive.steer * steerRate * dt * steerEff;
+      drive.heading += Math.abs(drive.speed) * Math.tan(angle) / 1.0 * dt * Math.sign(drive.speed);
   }
   // 车移动(数据空间 z-up -> 用一个地面 Group 载具: kart 已在 zup_root 下, 直接动 kartRoot)
   if (kartRoot && Math.abs(drive.speed) > 0.02) {
