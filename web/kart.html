@@ -527,7 +527,7 @@ addEventListener('keydown', e => {
 });
 addEventListener('keyup', e => { keys[e.key] = false; });
 const drive = { speed: 0, steer: 0, heading: 0, boost: false, crashUntil: 0, time: 0, reversePhase: 'none', vy: 0,
-  prevX: 0, prevZ: 0, prevLat: 0, airY: 0, routeHint: -1, model: 'official', velDir: 0,
+  prevX: 0, prevZ: 0, prevLat: 0, airY: 0, routeHint: -1, model: 'official', velDir: 0, prevUp: false,
   // 漂移/集气/喷气(kartspec id=1 speedType 竞速行: driftTrigTime .2s, driftMaxGauge 归一化为 1, 槽容量 2)
   drift: { phase: 'none', dir: 0, timer: 0, elapsed: 0, pending: 0 },
   gauge: 0, slots: [-1, -1],
@@ -858,7 +858,7 @@ renderer.setAnimationLoop(() => { try {
   {
     const D = drive.drift;
     const driftKey = keys['Shift'];
-    if (driftKey && D.phase === 'none' && drive.speed > 3 && left !== right) {
+    if (driftKey && up && D.phase === 'none' && drive.speed > 3 && left !== right) {
       D.phase = 'trigger'; D.dir = left ? 1 : -1; D.timer = 0.2;
       D.elapsed = 0; D.pending = 0;
       // 触发踢角: 车头先甩出去, 移动方向因抓地滞后 -> 侧滑
@@ -869,7 +869,7 @@ renderer.setAnimationLoop(() => { try {
       if (D.timer <= 0) D.phase = driftKey ? 'active' : 'decay';
       if (!driftKey) { D.phase = 'decay'; D.decay = 0.4; }
     } else if (D.phase === 'active') {
-      if (!driftKey) { D.phase = 'decay'; D.decay = 0.4; }
+      if (!driftKey) { D.phase = 'decay'; D.decay = 0.4; if (D.elapsed > 0.3) drive.tailMs = 500; }   // 官方 driftLifecycleB50 尾窗
     } else if (D.phase === 'decay') {
       D.decay -= dt;
       if (D.decay <= 0 || drive.speed < 3) {
@@ -914,11 +914,13 @@ renderer.setAnimationLoop(() => { try {
       drive.state = 3; drive.stateMs = 3000;
       sfxPlay('booster', { volume: 0.9 });
     }
-    if (up && drive.tailMs > 0 && drive.state === 0) {
-      drive.state = 2; drive.stateMs = 500; drive.tailMs = 0;
+    const upEdge = up && !drive.prevUp;                 // 油门重按边沿(官方 forward-down)
+    drive.prevUp = up;
+    if (upEdge && drive.tailMs > 0 && drive.state === 0) {
+      drive.state = 2; drive.stateMs = 500; drive.tailMs = 0;   // 连喷: 尾窗内重踩油门
       sfxPlay('boosterDrift', { volume: 0.9 });
     }
-    drive.tailMs = D.phase === 'decay' ? 500 : Math.max(0, drive.tailMs - dt * 1000);
+    drive.tailMs = Math.max(0, drive.tailMs - dt * 1000);
   }
     const steerTarget = left ? 1 : right ? -1 : 0;
   drive.steer += (steerTarget - drive.steer) * Math.min(1, 8 * dt);
