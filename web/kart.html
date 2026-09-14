@@ -1176,6 +1176,7 @@ renderer.setAnimationLoop(() => { try {
           if (slot >= 0) drive.slots[slot] = 6;        // 满槽 -> 获得 N2O(官方 updateModeInventory L23726)
         }
       }
+      if (D.phase === 'decay' && D.hadSlip) drive.tailMs = Math.max(drive.tailMs, 500);   // 甩过头的漂移结束才给小喷窗
     }
     // 集气累积(官方 accumulateDriftGauge L24358-24368, driftMaxGauge!=1 慢速分支):
     // 窗口从触发期结束开到 commit; s = localRightSpeed² × dt;
@@ -1201,17 +1202,23 @@ renderer.setAnimationLoop(() => { try {
     // 结束条件 = 反向拉车头把滑角拉过零(L24242 正常分支接管)——反打时低抓地产生
     // 强离心外滑, 弧线向外荡, 正确手法因此不撞墙。
     const drifting = D.phase === 'trigger' || D.phase === 'active' || D.phase === 'decay';
+    // 漂移分量模型(用户机制): Shift 按下一瞬冻结速度分量;
+    //   前向分量随按住衰减(8%/s) —— 按得越久前向越小;
+    //   侧向分量保持(= 漂移前方向键压出的斜向分量, 即官方 localRightSpeed);
+    //   行进方向 = 车头 - atan2(vl, vf) —— 前向越小转弯越快:
+    //   点按 = 缓弯(前向大), 长按 = 急弯/U型(前向小), 转弯快慢不来自特殊转向属性。
+    //   集气 vl²·dt 天然 ∝ 车速² 且随按住时长衰减(权重 3/1.5/1/(2t))。
+    if (drifting && !drive.newphys) {
+      const slip0 = drive.heading - drive.velDir;
+      let vf = drive.speed * Math.cos(slip0);
+      let vl = drive.speed * Math.sin(slip0);
+      vf -= Math.abs(vf) * 0.08 * dt;                            // 前向分量衰减(Shift 按住越久掉越多)
+      vl *= Math.exp(-(D.phase === 'decay' ? 3.0 : 0.3) * dt);   // 侧向: 漂移中保持, 松 Shift 后渐回收
+      drive.speed = Math.hypot(vf, vl);
+      drive.velDir = drive.heading - Math.atan2(vl, Math.max(vf, 0.5));
+      if (D.phase === 'decay' && Math.abs(vl) < 1.5) D.phase = 'none';   // 侧向回收完 = 漂移自然结束
+    }
     if (drifting) {
-      // 横摆率: 同向拉 = 加深漂移; **反向拉 = 车头被拉回(可越过速度方向, 系数>1)**
-      const steerMod = 1 + drive.steer * D.dir * 1.5;
-      const base = D.phase === 'trigger' ? 1.2
-                 : D.phase === 'active' ? 0.55 : 0.45;   // decay: 轻点漂移的 0.4s 滑行保持弧线(最佳化漂移)
-      const yaw = D.dir * base * Math.min(1, Math.abs(drive.speed) / 15) * steerMod;
-      drive.heading += yaw * dt;
-      // 漂移速度衰减(用户判定: 按住 Shift 漂移必须明显减速, 量级 10-20km/h/次):
-      // 速度比例衰减 8%/s —— 172km/h 漂 1s ≈ -13km/h, 80km/h 漂 1s ≈ -6km/h, 随车速走
-      if (!drive.newphys)
-        drive.speed -= Math.sign(drive.speed) * Math.abs(drive.speed) * 0.08 * dt;
       // 滑角过零 = 反拉到位, 漂移消失(commit 集气 + 开小喷尾窗)。
       // hadSlip 锁存: 必须先真正甩出滑角(>0.12rad)才允许反拉结束,
       // 否则上次反拉残留的负滑角会让新漂移刚建立就被误判结束(集气 0 元凶)
@@ -1234,11 +1241,9 @@ renderer.setAnimationLoop(() => { try {
       drive.gauge = Math.min(OFFICIAL.driftMaxGauge, drive.gauge + D.pending);
       D.pending = 0;
     }
-    // 移动方向以抓地速率追随车头(漂移时抓地低 = 侧滑; 平时迅速对齐)
-    // 新矢量模型不用此硬跟随 —— 侧向速度由抓地指数衰减自然消耗
-    if (!drive.newphys) {
-      const gripRate = drifting ? 1.8 : 10;
-      drive.velDir = angleLerp(drive.velDir, drive.heading, 1 - Math.exp(-gripRate * dt));
+    // 抓地: velDir 迅速对齐(10/s); 漂移阶段 velDir 已由分量模型接管(冻结斜向分量)
+    if (!drive.newphys && !drifting) {
+      drive.velDir = angleLerp(drive.velDir, drive.heading, 1 - Math.exp(-10 * dt));
     }
     // 喷气状态机
     if (drive.stateMs > 0) {
@@ -1262,11 +1267,11 @@ renderer.setAnimationLoop(() => { try {
   }
     const steerTarget = left ? 1 : right ? -1 : 0;
   drive.steer += (steerTarget - drive.steer) * Math.min(1, 8 * dt);
-  const driftingNow = drive.drift.phase !== 'none';
+  // 漂移与抓地共用同一套转向力(漂移的急缓来自分量模型, 不来自转向差异)
   if (drive.newphys) {
-    // 新矢量模型: 转向已在矢量分支(稳态转向/漂移横摆); 侧滑超阈值补轮胎印
+    // 新矢量模型: 转向已在矢量分支; 侧滑超阈值补轮胎印
     if (Math.abs(drive.slipVl || 0) > 3 && Math.abs(drive.speed) > 4) dropSkid();
-  } else if (!driftingNow) {
+  } else {
     // 官方动态轮胎力模型(同矢量分支, L24237+L23407+L24354), 标量等价形式:
     // 侧滑角 slip = heading - velDir; 车头角速度 ω 由前后轮力矩积分;
     // 速度方向 velDir 由侧向力(向心力)旋转; cornerDraw(0.18) 拖拽减速
