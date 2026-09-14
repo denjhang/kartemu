@@ -1208,11 +1208,10 @@ renderer.setAnimationLoop(() => { try {
                  : D.phase === 'active' ? 0.55 : 0.45;   // decay: 轻点漂移的 0.4s 滑行保持弧线(最佳化漂移)
       const yaw = D.dir * base * Math.min(1, Math.abs(drive.speed) / 15) * steerMod;
       drive.heading += yaw * dt;
-      // 漂移速度衰减(用户判定"黄油在锅上打滑"= 损耗极小): 官方漂移轮胎力 ×0.2 后
-      // F≈98N, 滑移功率 F·(v·θ)/(m·v) ≈ 0.1 m/s² —— 此前 v·ω²/1.8 公式在 ω=0.8 时
-      // 达 17m/s², 放大 170 倍。按官方推导量级取 0.15 m/s²。
+      // 漂移速度衰减(用户判定: 按住 Shift 漂移必须明显减速, 量级 10-20km/h/次):
+      // 速度比例衰减 8%/s —— 172km/h 漂 1s ≈ -13km/h, 80km/h 漂 1s ≈ -6km/h, 随车速走
       if (!drive.newphys)
-        drive.speed -= Math.sign(drive.speed) * 0.15 * dt;
+        drive.speed -= Math.sign(drive.speed) * Math.abs(drive.speed) * 0.08 * dt;
       // 滑角过零 = 反拉到位, 漂移消失(commit 集气 + 开小喷尾窗)。
       // hadSlip 锁存: 必须先真正甩出滑角(>0.12rad)才允许反拉结束,
       // 否则上次反拉残留的负滑角会让新漂移刚建立就被误判结束(集气 0 元凶)
