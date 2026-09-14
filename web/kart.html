@@ -1233,12 +1233,16 @@ renderer.setAnimationLoop(() => { try {
         const vlOld = Math.abs(drive.speed * Math.sin(drive.heading - drive.velDir));   // 侧向速度
         const vl = vlOld;
         D.elapsed += dt;
-        // 官方原式 vl²·dt(L24365); k=官方内速单位标定(内速单位未知, 按
-        // "c1 5-6 次最佳化漂移集满 4300" 用户基准标定: 150km/h 强漂移(vl≈16,0.6s,w̄1.5)
-        // 单次 ≈ 16²·0.6·1.5·2.8 ≈ 645 ≈ 4300/6.7)
-        const s = vl * vl * dt * 2.8;
+        // 官方原式 vl²·dt(L24365); k=内速单位标定(按"c1 5-6 次最佳化漂移集满 4300"标定)
+        const s = vl * vl * dt * 3.7;
         const w = D.elapsed < 0.2 ? 3 : D.elapsed < 0.5 ? 1.5 : 1 / (2 * D.elapsed);
         D.pending += s * w;
+        // 满槽即刻获得 N2O 并清零(用户判定: 条满立刻添加, 不等漂移结束)
+        if (drive.gauge + D.pending >= OFFICIAL.driftMaxGauge) {
+          drive.gauge = 0; D.pending = 0;
+          const slot = drive.slots.indexOf(-1);
+          if (slot >= 0) drive.slots[slot] = 6;
+        }
       }
     }
     // 漂移中: 车头横摆 + 低抓地侧滑(官方漂移分支轮胎力 ×driftSlipFactor=0.2, L24215)。
