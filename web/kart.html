@@ -310,7 +310,7 @@ const latRight = f => [-f[2], f[0]];
 }
 // 路肩堤岸(左右各一条, 草色, 从路缘回落到草地): 横向 [10,20,35,60,100], 高度系数 [1,.85,.6,.3,0]
 {
-  const OFFS = [10, 20, 35, 60, 100];
+  const OFFS = [ROAD_HALF, ROAD_HALF + 10, ROAD_HALF + 25, ROAD_HALF + 50, ROAD_HALF + 90];   // 随路宽缩放, 首点=路缘
   for (const side of [1, -1]) {
     const pos = [], idx = [];
     const N = FR.length, M = OFFS.length;
@@ -1319,7 +1319,7 @@ renderer.setAnimationLoop(() => { try {
       if (drive.airY === 0) drive.vy = 0;
     }
   }
-  // 路线围栏碰撞: 只阻止"地面穿越"(上一帧与这一帧 |lat| 在路缘 10.4 两侧则弹回),
+  // 路线围栏碰撞: 只阻止"地面穿越"(上一帧与这一帧 |lat| 在路缘外沿两侧则弹回),
   // 路外可自由走动不抽风; 空格跳起(离地>0.9)可跨越
   if (kartRoot) {
     const p = kartRoot.position;
