@@ -190,225 +190,148 @@ scene.add(scenery);
 // 场景实体碰撞体(树/房屋, {x,z,r} 圆近似)
 const solidColliders = [];
 const lambert = c => new THREE.MeshLambertMaterial({ color: c });
-// ---- 真实地图: 城镇高速公路官方路线(tools/export_route.py 从 track.1s 导出) ----
-// route.json: 官方 ToRoad frames, D->P 换算, 10u 重采样, 378 帧环形, 圈长 3780
-// 高程压缩 0.25(官方 27~82 爬坡, 压到 0~14; 路肩做成随路堤岸)
-const ROUTE = await (await fetch('track/route.json')).json();
+// 圆角矩形闭环路径(XZ 平面, Vector2 = (x,z))
+function loopPath(hw, hh, r) {
+  const path = new THREE.CurvePath();
+  const L = (x1, z1, x2, z2) => path.add(
+    new THREE.LineCurve(new THREE.Vector2(x1, z1), new THREE.Vector2(x2, z2)));
+  const C = (cx, cz, a0, a1) => path.add(new THREE.EllipseCurve(cx, cz, r, r, a0, a1, false));
+  L(-hw + r, -hh, hw - r, -hh); C(hw - r, -hh + r, -Math.PI / 2, 0);
+  L(hw, -hh + r, hw, hh - r);   C(hw - r, hh - r, 0, Math.PI / 2);
+  L(hw - r, hh, -hw + r, hh);   C(-hw + r, hh - r, Math.PI / 2, Math.PI);
+  L(-hw, hh - r, -hw, -hh + r); C(-hw + r, -hh + r, Math.PI, Math.PI * 1.5);
+  return path;
+}
+// 官方比例标定(城镇高速公路 track.1s 实测): 主环 ~31820u, 路宽(门短边) ~20u, kart 长 1.7u
+const ROAD = {
+  outer: [5010, 3010, 220],    // 路面外缘
+  inner: [4990, 2990, 200],    // 路面内缘(路宽 20)
+  cl:    [5000, 3000, 210],    // 中心线
+  fenceOut: [5017, 3017, 227], // 外侧围栏
+  fenceIn:  [4983, 2983, 193], // 内侧围栏
+};
+// 跑道
 {
-  let yMin = Infinity;
-  for (const f of ROUTE.frames) yMin = Math.min(yMin, f.p[1]);
-  for (const f of ROUTE.frames) f.p[1] = (f.p[1] - yMin) * 0.25;
-}
-const FR = ROUTE.frames;
-const ROAD_HALF = 10;                 // 路宽 20(官方门短边), 半宽 10
-// 路肩高程: |lat|<=10 为路面; 10~100 线性回落到草地
-function shoulderK(lat) {
-  const a = Math.abs(lat);
-  return a <= ROAD_HALF ? 1 : Math.max(0, 1 - (a - ROAD_HALF) / 90);
-}
-// 横向单位向量(水平, 垂直于前向)
-const latRight = f => [-f[2], f[0]];
-
-// 路面带(环形 ribbon): 每帧左右各一顶点
-{
-  const pos = [], idx = [];
-  const N = FR.length;
-  for (let i = 0; i < N; i++) {
-    const f = FR[i], r = latRight(f.f);
-    pos.push(f.p[0] - r[0] * ROAD_HALF, f.p[1] + 0.05, f.p[2] - r[1] * ROAD_HALF,
-             f.p[0] + r[0] * ROAD_HALF, f.p[1] + 0.05, f.p[2] + r[1] * ROAD_HALF);
-  }
-  for (let i = 0; i < N; i++) {
-    const a = i * 2, b = i * 2 + 1, c = ((i + 1) % N) * 2, d = c + 1;
-    idx.push(a, c, b, b, c, d);
-  }
-  const geo = new THREE.BufferGeometry();
-  geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
-  geo.setIndex(idx);
-  geo.computeVertexNormals();
-  scenery.add(new THREE.Mesh(geo, lambert(0x3a3f44)));
-}
-// 路肩堤岸(左右各一条, 草色, 从路缘回落到草地): 横向 [10,20,35,60,100], 高度系数 [1,.85,.6,.3,0]
-{
-  const OFFS = [10, 20, 35, 60, 100];
-  for (const side of [1, -1]) {
-    const pos = [], idx = [];
-    const N = FR.length, M = OFFS.length;
-    for (let i = 0; i < N; i++) {
-      const f = FR[i], r = latRight(f.f);
-      for (const off of OFFS) {
-        const k = shoulderK(side * off);
-        pos.push(f.p[0] + r[0] * off * side, f.p[1] * k, f.p[2] + r[1] * off * side);
-      }
-    }
-    for (let i = 0; i < N; i++) {
-      for (let j = 0; j < M - 1; j++) {
-        const a = i * M + j, b = a + 1, c = ((i + 1) % N) * M + j, d = c + 1;
-        idx.push(a, c, b, b, c, d);
-      }
-    }
-    const geo = new THREE.BufferGeometry();
-    geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
-    geo.setIndex(idx);
-    geo.computeVertexNormals();
-    scenery.add(new THREE.Mesh(geo, lambert(0x4f9640)));
-  }
-}
-// 路肩高程(车跟随): |lat|<=10 -> 路面高; 以外按堤岸系数回落
-function routeGroundY(x, z, ni) {
-  const fr = FR[ni], nxt = FR[(ni + 1) % FR.length];
-  const dx = x - fr.p[0], dz = z - fr.p[2];
-  const t = Math.max(0, Math.min(1, (dx * fr.f[0] + dz * fr.f[2]) / ROUTE.spacing));
-  const ry = fr.p[1] + (nxt.p[1] - fr.p[1]) * t;
-  const rx = -fr.f[2], rz = fr.f[0];
-  const lat = Math.abs(dx * rx + dz * rz);
-  return ry * shoulderK(lat) + (lat <= ROAD_HALF ? 0.05 : 0);
-}
-// 最近帧(局部提示搜索; 连续移动只需窗口内查, 丢失才全局)
-function routeNearest(x, z, hint) {
-  let best = -1, bd = Infinity;
-  const dist2 = i => { const p = FR[i].p; return (p[0] - x) * (p[0] - x) + (p[2] - z) * (p[2] - z); };
-  if (hint >= 0) {
-    for (let o = -30; o <= 30; o++) {
-      const i = (hint + o + FR.length) % FR.length, dd = dist2(i);
-      if (dd < bd) { bd = dd; best = i; }
-    }
-    if (bd < 900) return best;          // 30u 内命中即可信
-  }
-  for (let i = 0; i < FR.length; i++) {
-    const dd = dist2(i);
-    if (dd < bd) { bd = dd; best = i; }
-  }
-  return best;
-}
-// 中央车道虚线(InstancedMesh, 每帧一根)
-{
+  const shapeOf = pts => {
+    const s = new THREE.Shape();
+    s.moveTo(pts[0].x, pts[0].y);
+    for (let i = 1; i < pts.length; i++) s.lineTo(pts[i].x, pts[i].y);
+    s.closePath();
+    return s;
+  };
+  const outer = shapeOf(loopPath(...ROAD.outer).getSpacedPoints(4000));
+  outer.holes.push(new THREE.Path(loopPath(...ROAD.inner).getSpacedPoints(4000).reverse()));
+  const road = new THREE.Mesh(new THREE.ShapeGeometry(outer), lambert(0x3a3f44));
+  road.rotation.x = -Math.PI / 2;
+  road.position.y = 0.05;   // 与草地(-0.01)保持 0.06 间距, 配合 near=0.5 防 Z-fight
+  scenery.add(road);
+  // 中央车道虚线(InstancedMesh, 全环 ~1300 根)
+  const cl = loopPath(...ROAD.cl).getSpacedPoints(2600);
   const dashGeo = new THREE.PlaneGeometry(0.3, 3);
   dashGeo.rotateX(-Math.PI / 2);
-  const dashes = new THREE.InstancedMesh(dashGeo, lambert(0xffffff), FR.length);
+  const dashes = new THREE.InstancedMesh(dashGeo, lambert(0xffffff), Math.floor(cl.length / 2));
   const M = new THREE.Matrix4(), Q = new THREE.Quaternion(), E = new THREE.Euler(),
         S1 = new THREE.Vector3(1, 1, 1), P = new THREE.Vector3();
-  FR.forEach((f, i) => {
-    E.set(0, Math.atan2(f.f[0], f.f[2]), 0);
+  let n = 0;
+  for (let i = 0; i < cl.length; i += 2) {
+    const nxt = cl[(i + 1) % cl.length];
+    E.set(0, Math.atan2(nxt.x - cl[i].x, nxt.y - cl[i].y), 0);
     Q.setFromEuler(E);
-    P.set(f.p[0], f.p[1] + 0.06, f.p[2]);
+    P.set(cl[i].x, 0.06, cl[i].y);
     M.compose(P, Q, S1);
-    dashes.setMatrixAt(i, M);
-  });
+    dashes.setMatrixAt(n++, M);
+  }
   dashes.instanceMatrix.needsUpdate = true;
   scenery.add(dashes);
 }
-// 围栏(白柱+红杆), 路缘两侧
-{
+// 围栏(白色立柱 + 红色横杆), 跑道两侧
+function fence(p2d) {
+  const pts3 = p2d.getSpacedPoints(6000).map(v => new THREE.Vector3(v.x, 0, v.y));
+  const rail = new THREE.Mesh(
+    new THREE.TubeGeometry(
+      new THREE.CatmullRomCurve3(pts3.filter((_, i) => i % 4 === 0), true),
+      3000, 0.05, 5, true),
+    lambert(0xcc4433));
+  rail.position.y = 0.55;
+  const n = Math.floor(pts3.length / 3);
   const posts = new THREE.InstancedMesh(
-    new THREE.CylinderGeometry(0.05, 0.05, 0.9, 6), lambert(0xf2f2f2), FR.length * 2);
+    new THREE.CylinderGeometry(0.05, 0.05, 0.9, 6), lambert(0xf2f2f2), n);
   const M = new THREE.Matrix4();
-  let n = 0;
-  const edgePts = [[], []];
-  FR.forEach((f, i) => {
-    const r = latRight(f.f);
-    for (const side of [1, -1]) {
-      const x = f.p[0] + r[0] * ROAD_HALF * side, z = f.p[2] + r[1] * ROAD_HALF * side;
-      edgePts[side === 1 ? 0 : 1].push(new THREE.Vector3(x, f.p[1] + 0.55, z));
-      if (i % 2 === 0) { M.setPosition(x, f.p[1] + 0.45, z); posts.setMatrixAt(n++, M); }
-    }
-  });
+  for (let i = 0; i < n; i++) {
+    M.setPosition(pts3[i * 3].x, 0.45, pts3[i * 3].z);
+    posts.setMatrixAt(i, M);
+  }
   posts.instanceMatrix.needsUpdate = true;
-  for (const pts of edgePts) {
-    pts.push(pts[0].clone());
-    scenery.add(new THREE.Mesh(
-      new THREE.TubeGeometry(new THREE.CatmullRomCurve3(pts, true), pts.length * 2, 0.05, 5, true),
-      lambert(0xcc4433)));
-  }
-  scenery.add(posts);
+  scenery.add(rail, posts);
 }
-// 出生点/朝向 = 官方路线首帧
-const SPAWN = { x: FR[0].p[0], z: FR[0].p[2], heading: Math.atan2(FR[0].f[0], FR[0].f[2]) };
-// 起点门架(视觉地标)
+fence(loopPath(...ROAD.fenceOut));
+fence(loopPath(...ROAD.fenceIn));
+// 树: 沿中心线两侧随机散布(雾距内可见为度)
 {
-  const f = FR[4], r = latRight(f.f);
-  const postGeo = new THREE.CylinderGeometry(0.15, 0.15, 7, 8);
-  const postMat = lambert(0xd8dde2);
-  for (const side of [1, -1]) {
-    const post = new THREE.Mesh(postGeo, postMat);
-    post.position.set(f.p[0] + r[0] * 9.5 * side, f.p[1] + 3.5, f.p[2] + r[1] * 9.5 * side);
-    scenery.add(post);
-  }
-  const bar = new THREE.Mesh(new THREE.BoxGeometry(19.6, 0.5, 0.5), lambert(0xcc4433));
-  bar.position.set(f.p[0], f.p[1] + 7, f.p[2]);
-  bar.rotation.y = Math.atan2(r[0], r[1]) + Math.PI / 2;
-  scenery.add(bar);
-}
-// 树: 沿路线两侧随机散布
-{
+  const cl = loopPath(...ROAD.cl).getSpacedPoints(2000);
   let seed = 7;
   const rnd = () => (seed = seed * 16807 % 2147483647) / 2147483647;
   const spots = [];
-  FR.forEach((f, i) => {
+  cl.forEach((p, i) => {
     if (i % 2) return;
-    const r = latRight(f.f);
+    const nxt = cl[(i + 1) % cl.length];
+    const tx = nxt.x - p.x, tz = nxt.y - p.y, l = Math.hypot(tx, tz) || 1;
+    const nx = -tz / l, nz = tx / l;
     const off = (rnd() < 0.5 ? 1 : -1) * (15 + rnd() * 150);
-    const x = f.p[0] + r[0] * off, z = f.p[2] + r[1] * off;
-    const gy = f.p[1] * shoulderK(off);
-    if (Math.abs(x - SPAWN.x) < 40 && Math.abs(z - SPAWN.z) < 50) return;
-    spots.push([x, gy, z, 0.8 + rnd() * 0.9]);
+    const x = p.x + nx * off, z = p.y + nz * off;
+    if (Math.abs(x) < 40 && Math.abs(z + 3000) < 50) return;   // 出生直道附近留空
+    spots.push([x, z, 0.8 + rnd() * 0.9]);
   });
   const trunks = new THREE.InstancedMesh(
     new THREE.CylinderGeometry(0.12, 0.18, 1, 6), lambert(0x8a5a33), spots.length);
   const crowns = new THREE.InstancedMesh(
     new THREE.ConeGeometry(0.9, 2.2, 7), lambert(0x2f8d46), spots.length);
   const M = new THREE.Matrix4();
-  spots.forEach(([x, gy, z, s], i) => {
+  spots.forEach(([x, z, s], i) => {
     solidColliders.push({ x, z, r: 0.5 * s });
-    M.makeScale(s, s, s); M.setPosition(x, gy + 0.5 * s, z); trunks.setMatrixAt(i, M);
-    M.setPosition(x, gy + 2.1 * s, z); crowns.setMatrixAt(i, M);
+    M.makeScale(s, s, s); M.setPosition(x, 0.5 * s, z); trunks.setMatrixAt(i, M);
+    M.setPosition(x, 2.1 * s, z); crowns.setMatrixAt(i, M);
   });
   trunks.instanceMatrix.needsUpdate = crowns.instanceMatrix.needsUpdate = true;
   scenery.add(trunks, crowns);
 }
-// 房屋: 沿路每 ~8 帧(80u)一座, 两侧交错
-FR.forEach((f, i) => {
-  if (i % 8) return;
-  const k = i / 8;
-  const r = latRight(f.f);
-  const off = (k % 2 ? 1 : -1) * (30 + (k * 7) % 110);
-  const x = f.p[0] + r[0] * off, z = f.p[2] + r[1] * off;
-  const gy = f.p[1] * shoulderK(off);
-  const w = 3 + k % 3, d = 2.5 + k % 2, h = 1.6;
-  solidColliders.push({ x, z, r: Math.max(w, d) / 2 + 0.2 });
-  const body = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), lambert(k % 2 ? 0xe8ddc0 : 0xd9a066));
-  body.position.y = gy + h / 2;
-  const roof = new THREE.Mesh(new THREE.ConeGeometry(Math.max(w, d) * 0.72, 1.1, 4), lambert(0xa04030));
-  roof.position.y = gy + h + 0.55; roof.rotation.y = Math.PI / 4;
-  const g = new THREE.Group();
-  g.add(body, roof);
-  g.position.set(x, 0, z); g.rotation.y = Math.atan2(f.f[0], f.f[2]) + k;
-  scenery.add(g);
-});
-// 地平线剪影: 近丘 + 远山(沿路两侧, 雾缘可见度内)
+// 房屋: 沿路每 ~500u 一座, 两侧交错
 {
+  const cl = loopPath(...ROAD.cl).getSpacedPoints(2600);
+  for (let i = 0, k = 0; i < cl.length; i += 43, k++) {
+    const p = cl[i], nxt = cl[(i + 1) % cl.length];
+    const tx = nxt.x - p.x, tz = nxt.y - p.y, l = Math.hypot(tx, tz) || 1;
+    const nx = -tz / l, nz = tx / l;
+    const off = (k % 2 ? 1 : -1) * (30 + (k * 7) % 110);
+    const x = p.x + nx * off, z = p.y + nz * off;
+    const w = 3 + k % 3, d = 2.5 + k % 2, h = 1.6;
+    solidColliders.push({ x, z, r: Math.max(w, d) / 2 + 0.2 });
+    const body = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), lambert(k % 2 ? 0xe8ddc0 : 0xd9a066));
+    body.position.y = h / 2;
+    const roof = new THREE.Mesh(new THREE.ConeGeometry(Math.max(w, d) * 0.72, 1.1, 4), lambert(0xa04030));
+    roof.position.y = h + 0.55; roof.rotation.y = Math.PI / 4;
+    const g = new THREE.Group();
+    g.add(body, roof);
+    g.position.set(x, 0, z); g.rotation.y = Math.atan2(tx, tz) + k;
+    scenery.add(g);
+  }
+}
+// 远山: 沿路两侧 300~390u(雾缘剪影), 大体量
+{
+  const cl = loopPath(...ROAD.cl).getSpacedPoints(2600);
   let seed = 11;
   const rnd = () => (seed = seed * 16807 % 2147483647) / 2147483647;
-  FR.forEach((f, i) => {
-    if (i % 4) return;
-    const r = latRight(f.f);
-    const side = rnd() < 0.5 ? 1 : -1;
-    if (i % 8 === 0) {   // 远山
-      const off = side * (300 + rnd() * 90);
-      const h = 60 + rnd() * 90;
-      const m = new THREE.Mesh(new THREE.ConeGeometry(h * 0.9, h, 5), lambert(0x6f8560));
-      m.position.set(f.p[0] + r[0] * off, h / 2 - 2, f.p[2] + r[1] * off);
-      m.rotation.y = rnd() * 3;
-      scenery.add(m);
-    } else {             // 近丘
-      const off = side * (60 + rnd() * 120);
-      const h = 8 + rnd() * 20;
-      const m = new THREE.Mesh(new THREE.ConeGeometry(h * 1.6, h, 6), lambert(0x5c9050));
-      m.position.set(f.p[0] + r[0] * off, h / 2 - 1, f.p[2] + r[1] * off);
-      m.rotation.y = rnd() * 3;
-      scenery.add(m);
-    }
-  });
+  for (let i = 0; i < cl.length; i += 26) {
+    const p = cl[i], nxt = cl[(i + 1) % cl.length];
+    const tx = nxt.x - p.x, tz = nxt.y - p.y, l = Math.hypot(tx, tz) || 1;
+    const nx = -tz / l, nz = tx / l;
+    const off = (rnd() < 0.5 ? 1 : -1) * (300 + rnd() * 90);
+    const h = 60 + rnd() * 90;
+    const m = new THREE.Mesh(new THREE.ConeGeometry(h * 0.9, h, 5), lambert(0x6f8560));
+    m.position.set(p.x + nx * off, h / 2 - 2, p.y + nz * off);
+    m.rotation.y = rnd() * 3;
+    scenery.add(m);
+  }
 }
 
 const rotX = a => new THREE.Matrix4().makeRotationX(a);
@@ -423,8 +346,7 @@ addEventListener('keydown', e => {
     if (kartRoot) {
       kartRoot.position.set(SPAWN.x, 0, SPAWN.z);
       kartRoot.rotation.y = SPAWN.heading;
-      drive.heading = SPAWN.heading; drive.speed = 0; drive.steer = 0; drive.vy = 0; drive.airY = 0;
-      drive.routeHint = -1; drive.prevLat = 0;
+      drive.heading = SPAWN.heading; drive.speed = 0; drive.steer = 0; drive.vy = 0;
       drive.prevX = SPAWN.x; drive.prevZ = SPAWN.z;
       window.__balloonPos && window.__balloonPos.set(0, 1.15, 1.8);
       window.__balloonVel && window.__balloonVel.set(0, 0, 0);
@@ -433,12 +355,22 @@ addEventListener('keydown', e => {
 });
 addEventListener('keyup', e => { keys[e.key] = false; });
 const drive = { speed: 0, steer: 0, heading: 0, boost: false, crashUntil: 0, time: 0, reversePhase: 'none', vy: 0,
-  prevX: 0, prevZ: 0, prevLat: 0, airY: 0, routeHint: -1, model: 'official' };
+  prevX: 0, prevZ: -3000, model: 'official' };
 window.__drive = drive;
 document.getElementById('cb-official').onchange = e => {
   drive.model = e.target.checked ? 'official' : 'test';
 };
-// 路线横向碰撞: |lat| 相对路缘 10.4 的跨越检测(跳起可越过), 详见渲染循环
+// 出生地: 跑道下直道中线, 朝 +x(右)
+const SPAWN = { x: 0, z: -3000, heading: Math.PI / 2 };
+// 围栏碰撞墙(与 ROAD.fenceOut/fenceIn 对应)
+const WALL_OUT = { hw: 5017, hh: 3017, r: 227, limit: -0.4 };
+const WALL_IN  = { hw: 4983, hh: 2983, r: 193, limit: 0.4 };
+// 圆角矩形 SDF(围栏碰撞): <0 在内部
+function rrectSDF(x, z, hw, hh, r) {
+  const qx = Math.abs(x) - (hw - r), qz = Math.abs(z) - (hh - r);
+  return Math.hypot(Math.max(qx, 0), Math.max(qz, 0)) + Math.min(Math.max(qx, qz), 0) - r;
+}
+
 let kartRoot, rekart, handleChild, wheelChildren = [], mainAngle = 0;
 let mixer = null, accMixer = null, balloonT = 0, balloonNodeRef = null;
 let flames = [], obstacles = [];
@@ -546,10 +478,9 @@ Promise.all([
   // 障碍柱(碰撞测试, 出生直道上错开摆放)
   obstacles = [];
   const obsMat = new THREE.MeshNormalMaterial();
-  for (const [fi, off] of [[16, 4], [28, -4], [41, 3], [54, -3]]) {
+  for (const [ox, oz] of [[25, -2995], [-25, -3005], [45, -2995], [-45, -3005]]) {
     const post = new THREE.Mesh(new THREE.CylinderGeometry(0.4, 0.4, 1.6, 10), obsMat);
-    const fr = FR[fi % FR.length], rr = latRight(fr.f);
-    post.position.set(fr.p[0] + rr[0] * off, fr.p[1] + 0.85, fr.p[2] + rr[1] * off);
+    post.position.set(ox, 0.8, oz);
     scene.add(post);
     obstacles.push(post);
   }
@@ -614,7 +545,7 @@ function updateTacho() {
 }
 
 // ---- 存档: 位置+朝向+视角, localStorage, 刷新自动恢复 ----
-const SAVE_KEY = 'kartemu_save_v3';   // v3: 真实官方路线图(旧坐标不兼容)
+const SAVE_KEY = 'kartemu_save_v2';   // v2: 官方比例地图(旧坐标不兼容)
 function saveState() {
   if (!kartRoot) return;
   try {
@@ -637,7 +568,6 @@ function applyState(s) {
   kartRoot.rotation.y = s.heading;
   drive.heading = s.heading;
   drive.prevX = s.pos[0]; drive.prevZ = s.pos[2];
-  drive.routeHint = -1; drive.prevLat = 0;
   if (s.camMode && s.camMode !== camMode) {
     const r = document.querySelector('input[name=cam][value=' + s.camMode + ']');
     if (r) r.click();          // 触发对应视角初始化
@@ -714,34 +644,32 @@ renderer.setAnimationLoop(() => {
       kartRoot.position.x += dx * 0.3; kartRoot.position.z += dz * 0.3;
     }
   }
-  // 空格跳跃(CS式: 起跳后越围栏, 落地恢复碰撞); airY = 离地高
+  // 空格跳跃(CS式: 起跳后越围栏, 落地恢复碰撞)
   if (kartRoot) {
-    if (keys[' '] && drive.vy === 0 && drive.airY <= 0) drive.vy = 6;
-    if (drive.vy !== 0 || drive.airY > 0) {
+    if (keys[' '] && drive.vy === 0 && kartRoot.position.y <= 0) drive.vy = 6;
+    if (drive.vy !== 0 || kartRoot.position.y > 0) {
       drive.vy -= 18 * dt;
-      drive.airY = Math.max(0, drive.airY + drive.vy * dt);
-      if (drive.airY === 0) drive.vy = 0;
+      kartRoot.position.y = Math.max(0, kartRoot.position.y + drive.vy * dt);
+      if (kartRoot.position.y === 0) drive.vy = 0;
     }
   }
-  // 路线围栏碰撞: 只阻止"地面穿越"(上一帧与这一帧 |lat| 在路缘 10.4 两侧则弹回),
-  // 路外可自由走动不抽风; 空格跳起(离地>0.9)可跨越
+  // 围栏碰撞: 只阻止"地面穿越"(上一帧与这一帧在围栏两侧则弹回),
+  // 围栏外可自由走动不抽风; 空格跳起(离地>0.9)可跨越
   if (kartRoot) {
     const p = kartRoot.position;
-    const ni = routeNearest(p.x, p.z, drive.routeHint);
-    drive.routeHint = ni;
-    const fr = FR[ni], r = latRight(fr.f);
-    const lat = (p.x - fr.p[0]) * r[0] + (p.z - fr.p[2]) * r[1];
-    if (drive.airY < 0.9) {
-      const dNow = Math.abs(lat), dPrev = Math.abs(drive.prevLat);
-      if (Number.isFinite(dPrev) && (dNow > 10.4) !== (dPrev > 10.4)) {
-        p.x = drive.prevX; p.z = drive.prevZ;
-        drive.speed *= -0.3;
+    if (p.y < 0.9) {
+      const walls = [WALL_OUT, WALL_IN];
+      for (const w of walls) {
+        const dNow = rrectSDF(p.x, p.z, w.hw, w.hh, w.r);
+        const dPrev = rrectSDF(drive.prevX, drive.prevZ, w.hw, w.hh, w.r);
+        // prev 无效(初始/R复位瞬间)不判定, 防止 undefined 污染坐标成 NaN
+        if (Number.isFinite(dPrev) && (dNow > w.limit) !== (dPrev > w.limit)) {
+          p.x = drive.prevX; p.z = drive.prevZ;
+          drive.speed *= -0.3;
+        }
       }
     }
     drive.prevX = p.x; drive.prevZ = p.z;
-    drive.prevLat = lat;
-    // 地面高程跟随: 路面/堤岸/草地
-    p.y = routeGroundY(p.x, p.z, ni) + drive.airY;
     // 场景碰撞体(树/房, 全高度实体): 圆近似推挤
     for (const c of solidColliders) {
       const dx = p.x - c.x, dz = p.z - c.z, rr = c.r + 0.6;
