@@ -86,6 +86,7 @@
   </div>
   <div id="itemSlot"><i class="icon"></i></div>
   <div id="boostGauge"><i class="fill"></i><i class="marker"></i><i class="fullov"></i></div>
+  <div id="driftDbg" style="position:fixed; left:12px; bottom:14px; color:#8f8; font:12px monospace; text-shadow:0 0 4px #000; white-space:pre; user-select:none; pointer-events:none;"></div>
   <div id="tachoHint">tacho: cotton 官方皮肤 1:1(表盘 0-375km/h) · Shift 漂移集气 · Ctrl 大喷 · 尾窗内松油再踩=连喷</div>
   <div>转向 <input id="steer" type="range" min="-1" max="1" step="0.01" value="0">
        <span id="steerV">0.00</span>
@@ -1623,6 +1624,20 @@ renderer.setAnimationLoop(() => { try {
   }
   controls.update();
   updateTacho();
+  { // 左下角: Shift计数/加成/有效灵敏度 实时打印
+    const D = drive.drift;
+    const presses = Math.round((D.sensBonus || 0) / 0.3);
+    const eff = drive.driftSens * (1 + (D.sensBonus || 0))
+      * (drive.driftMode === 'v3' ? Math.min(3, 1 + 1.5 * (D.phase === 'active' || D.phase === 'decay' ? D.elapsed : 0)) : 1);
+    const el = document.getElementById('driftDbg');
+    if (el) el.textContent =
+      `Shift加成点数: ${presses}
+加成: +${Math.round((D.sensBonus || 0) * 100)}%
+` +
+      `有效漂移灵敏度: ${eff.toFixed(2)} (滑块${drive.driftSens.toFixed(2)})
+漂移状态: ${D.phase} 滑角: ` +
+      `${kartRoot ? ((drive.heading - drive.velDir) * 57.3).toFixed(0) : 0}°`;
+  }
   sfxEngine(drive.speed);
   renderer.render(scene, camera);
   } catch (e) { window.__loopErr = e.message; }
