@@ -711,6 +711,7 @@ function saveCfg() {
       steerSens: drive.steerSens,
       miniBoost: drive.miniBoost,
       shiftDecay: drive.shiftDecay,
+      exitThresh: drive.exitThresh,
       toggles: CFG_TOGGLE_IDS.map(id => document.getElementById(id).checked),
     }));
   } catch (e) { /* 存储不可用则忽略 */ }
@@ -729,7 +730,8 @@ function loadCfg() {
     document.getElementById('driftMode').value = c.driftMode;
   }
   const sliders = [['driftSens', 'driftSens', c.driftSens], ['steerSens', 'steerSens', c.steerSens],
-                   ['miniBoost', 'miniBoost', c.miniBoost], ['shiftDecay', 'shiftDecay', c.shiftDecay]];
+                   ['miniBoost', 'miniBoost', c.miniBoost], ['shiftDecay', 'shiftDecay', c.shiftDecay],
+                   ['exitThresh', 'exitThresh', c.exitThresh]];
   for (const [id, prop, val] of sliders) {
     if (typeof val !== 'number' || !Number.isFinite(val)) continue;
     drive[prop] = val;
@@ -1312,8 +1314,9 @@ renderer.setAnimationLoop(() => { try {
     if (drifting) {
       // 二次 Shift(用户机制): 漂移中同方向再点 = 隐约调整漂移灵敏度(+15%/层, 最多4层);
       // 反方向再点 = 已有快拉(叠加反向横摆快速改出)
-      if (shiftEdge && D.phase === 'active' && drive.steer * D.dir > 0.1)
+      if (shiftEdge && (D.phase === 'active' || D.phase === 'decay') && drive.steer * D.dir > 0.1)
         D.sensBonus = Math.min(1.2, (D.sensBonus || 0) + 0.3);   // 每次同向点Shift: 灵敏度+30%
+        // (二次点按必然落在 decay 相位——松 Shift 即入 decay)
       if (drive.steer * D.dir < -0.1) D.sensBonus = 0;           // 改方向清零加成
       // 滑角过零 = 反拉到位, 漂移消失(commit 集气 + 开小喷尾窗)。
       // hadSlip 锁存: 必须先真正甩出滑角(>0.12rad)才允许反拉结束,
