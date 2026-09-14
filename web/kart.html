@@ -1210,8 +1210,7 @@ renderer.setAnimationLoop(() => { try {
     } else if (D.phase === 'active') {
       if (!driftKey) { D.phase = 'decay'; D.decay = 0.4; drive.tailMs = 500; }   // 官方 B50 尾窗: 松漂移且油门松开(下方 upEdge 判定小喷)
     } else if (D.phase === 'decay') {
-      D.decay -= dt;
-      if (D.decay <= 0 || drive.speed < 3) {
+      if (drive.speed < 3) {
         D.phase = 'none';
         drive.gauge = Math.min(OFFICIAL.driftMaxGauge, drive.gauge + D.pending);
         D.pending = 0;                                 // commit 后清零, 集气条归零(L24381)
@@ -1261,7 +1260,7 @@ renderer.setAnimationLoop(() => { try {
       const steerMod = (1 + drive.steer * D.dir * 1.5) * sens;
       // base 阶梯值平滑逼近(松油门/阶段切换时灵敏度不再突变)
       const baseTgt = D.phase === 'trigger' ? 1.2
-                    : D.phase === 'active' ? 0.55 : 0.45;
+                    : D.phase === 'active' ? 0.55 : 0.2;   // decay 滑行: 横摆减弱, 滑角缓慢自然衰减
       if (D.baseSm === undefined) D.baseSm = baseTgt;
       D.baseSm += (baseTgt - D.baseSm) * Math.min(1, 8 * dt);
       // 速度因子加 0.35 下限: 低速仍有基本横摆响应(此前低于15m/s 线性直落=灵敏度断崖)
@@ -1280,7 +1279,10 @@ renderer.setAnimationLoop(() => { try {
         ? Math.min(0.25, drive.shiftDecay + 0.08 * hold)
         : drive.shiftDecay;
       drive.speed -= Math.sign(drive.speed) * Math.abs(drive.speed) * decay * dt;
-      drive.velDir = angleLerp(drive.velDir, drive.heading, 1 - Math.exp(-1.8 * dt));
+      // decay 跟随 0.9/s(漂移中1.8): 滑角缓慢衰减,
+      // 滑行时长 ≈ (松Shift时滑角 - 改出阈值) / 0.9 —— 阈值越小滑行越久
+      const follow = D.phase === 'decay' ? 0.9 : 1.8;
+      drive.velDir = angleLerp(drive.velDir, drive.heading, 1 - Math.exp(-follow * dt));
     }
     if (drifting) {
       // 滑角过零 = 反拉到位, 漂移消失(commit 集气 + 开小喷尾窗)。
