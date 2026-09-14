@@ -1295,8 +1295,8 @@ renderer.setAnimationLoop(() => { try {
   if (drive.newphys) {
     // 新矢量模型: 转向已在矢量分支; 侧滑超阈值补轮胎印
     if (Math.abs(drive.slipVl || 0) > 3 && Math.abs(drive.speed) > 4) dropSkid();
-  } else if (drive.legacyDrift && drifting) {
-    // 旧漂移: 横摆已由上方启发式处理
+  } else if (drive.legacyDrift && drive.drift.phase !== 'none') {
+    // 旧漂移: 横摆已由上方启发式处理(drifting 是状态机块级变量, 此处直接查 phase)
   } else {
     // 官方动态轮胎力模型(同矢量分支, L24237+L23407+L24354), 标量等价形式:
     // 侧滑角 slip = heading - velDir; 车头角速度 ω 由前后轮力矩积分;
