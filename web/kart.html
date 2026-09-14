@@ -1198,8 +1198,15 @@ renderer.setAnimationLoop(() => { try {
       if (D.baseSm === undefined) D.baseSm = baseTgt;
       D.baseSm += (baseTgt - D.baseSm) * Math.min(1, 8 * dt);
       // 速度因子加 0.35 下限: 低速仍有基本横摆响应(此前低于15m/s 线性直落=灵敏度断崖)
-      const yaw = D.dir * D.baseSm
+      let yaw = D.dir * D.baseSm
         * (0.35 + 0.65 * Math.min(1, Math.abs(drive.speed) / 15)) * steerMod;
+      // 快拉(用户机制): 漂移中(Shift按住)反方向拉车头 = 叠加一个反向漂移横摆,
+      // 快速拉正车身 —— 右漂时反打左即相当于叠加左漂
+      if (D.phase === 'active' && driftKey && drive.steer * D.dir < -0.1) {
+        const pull = Math.min(1, -drive.steer * D.dir);   // 反打量(0..1)
+        yaw += -D.dir * D.baseSm * 0.9 * pull
+             * (0.35 + 0.65 * Math.min(1, Math.abs(drive.speed) / 15));
+      }
       drive.heading += yaw * dt;
       // 速度衰减 = SHIFT衰减滑块(默认8%/s); v2 额外按住递增(每秒+8%, 上限25%)
       const decay = drive.driftMode === 'v2'
