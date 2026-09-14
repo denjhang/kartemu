@@ -1061,10 +1061,13 @@ renderer.setAnimationLoop(() => { try {
       : (Dv.phase !== 'active' ? 1.8 : (drive.steer * Dv.dir < -0.1 ? 9.0 : 1.8));
     vl *= Math.exp(-grip * dt);
     // 非漂移转向 = 官方稳态转向(deob L24237+L23407): ω = δ·vf/(2·Pr), Pr=0.5 -> 轴距 1.0;
-    // δ = steer·10°·exp(-|vf|/22.25)。漂移横摆由漂移状态机接管
+    // δ = steer·10°·exp(-|vf|/22.25)。漂移横摆由漂移状态机接管。
+    // cornerDrawFactor(kartspec 0.18, L24251): 转弯时沿-Forward的回正拖拽 = 0.18·|v·ω|
     if (!drifting && Math.abs(vf) > 0.1) {
       const angle = drive.steer * (10 * Math.PI / 180) * Math.exp(-Math.abs(vf) / OFFICIAL.steerConstraint);
-      drive.heading += Math.abs(vf) * Math.tan(angle) / 1.0 * dt * Math.sign(vf);
+      const w = Math.abs(vf) * Math.tan(angle) / 1.0 * Math.sign(vf);
+      drive.heading += w * dt;
+      vf -= Math.sign(vf) * 0.18 * Math.abs(vf * w) * dt;
     }
     drive.vx = fx * vf + rx * vl;
     drive.vz = fz * vf + rz * vl;
@@ -1119,10 +1122,9 @@ renderer.setAnimationLoop(() => { try {
     if (D.phase === 'trigger') {
       D.timer -= dt;
       if (D.timer <= 0) {
-        // 官方 L24203: 触发期结束即打开集气窗(与 Shift 是否仍按住无关——轻点也给满);
-        // cotton1 driftMaxGauge===1 -> pendingGauge=1(L24361); 倒车不集气(L24359)
+        // 官方 L24203: 触发期结束即打开集气窗(与 Shift 是否仍按住无关——轻点也给)
         D.phase = driftKey ? 'active' : 'decay';
-        if (drive.speed >= 0) D.pending = 1;
+        if (D.phase === 'decay') drive.tailMs = 500;   // 轻点漂移结束同样开 B50 小喷尾窗
       }
     } else if (D.phase === 'active') {
       if (!driftKey) { D.phase = 'decay'; D.decay = 0.4; drive.tailMs = 500; }   // 官方 B50 尾窗: 松漂移且油门松开(下方 upEdge 判定小喷)
@@ -1131,23 +1133,43 @@ renderer.setAnimationLoop(() => { try {
       if (D.decay <= 0 || drive.speed < 3) {
         D.phase = 'none';
         drive.gauge = Math.min(1, drive.gauge + D.pending);
+        D.pending = 0;                                 // commit 后清零, 集气条归零(L24381)
         if (drive.gauge >= 1) {
           drive.gauge = 0;
           const slot = drive.slots.indexOf(-1);
-          if (slot >= 0) drive.slots[slot] = 6;
+          if (slot >= 0) drive.slots[slot] = 6;        // 满槽 -> 获得 N2O(官方 updateModeInventory L23726)
         }
+      }
+    }
+    // 集气累积(官方 accumulateDriftGauge L24358-24368, driftMaxGauge!=1 慢速分支):
+    // 窗口从触发期结束开到 commit; s = localRightSpeed² × dt;
+    // 前0.2s ×3 / 0.5s内 ×1.5 / 之后 ÷(2×elapsed); 倒车(localForwardSpeed<0)不集气。
+    // 注: 本客户端 kartspec 全车系 driftMaxGauge=1(=1次漂移满), 用户判定 cotton1 手感应为
+    // 5-6 次最佳化漂移集满 -> 采用慢速公式, 标度 k 标定为: 强漂移(vl≈10, 0.6s)单次 +0.2,
+    // 普通漂移更少 => 约 5-8 次集满(实测 k=0.0033 时单次 0.81, 过快, /4)
+    if (D.phase === 'active' || D.phase === 'decay') {
+      if (drive.speed >= 0) {
+        const vlOld = Math.abs(drive.speed * Math.sin(drive.heading - drive.velDir));   // 侧向速度
+        const vl = drive.newphys ? Math.abs(drive.slipVl || 0) : vlOld;
+        D.elapsed += dt;
+        const s = vl * vl * dt * 0.0008;
+        const w = D.elapsed < 0.2 ? 3 : D.elapsed < 0.5 ? 1.5 : 1 / (2 * D.elapsed);
+        D.pending += s * w;
       }
     }
     // 漂移中: 车头横摆为主(方向键调漂移角), 速度方向以有限抓地跟随 -> 侧滑而不拐墙
     const drifting = D.phase === 'trigger' || D.phase === 'active' || D.phase === 'decay';
     if (drifting) {
       // 横摆率: trigger 快(甩头) > active(漂移) > decay(尾滑); 方向键调节漂移紧/松
-      // 新矢量模型: active 基准略降(0.95), 反打方向时抓地加倍拉直(见矢量分支)
       const steerMod = 1 + drive.steer * D.dir * (drive.newphys ? 0.4 : 0.7);
       const base = D.phase === 'trigger' ? 1.2
                  : D.phase === 'active' ? 0.55 : 0.25;
-      drive.heading += D.dir * base * Math.min(1, Math.abs(drive.speed) / 15) * steerMod * dt;
-      // 官方无"漂移 blanket 减速": 松油门只失去推力, 减速=阻力+侧滑摩擦(矢量模型里 vl 衰减即能量损失)
+      const yaw = D.dir * base * Math.min(1, Math.abs(drive.speed) / 15) * steerMod;
+      drive.heading += yaw * dt;
+      // 漂移速度衰减: 官方侧滑摩擦持续消耗动能 —— 矢量模型中由 vl 抓地衰减自然涌现;
+      // 等效损耗率 = |v|·ω²/grip(grip=9×driftSlipFactor=1.8)。旧标量路径按同式显式衰减。
+      if (!drive.newphys)
+        drive.speed -= Math.sign(drive.speed) * drive.speed * yaw * yaw / 1.8 * dt;
       if (!SFX.drift && SFX.buffers.drift) SFX.drift = sfxPlay('drift', { loop: true, volume: 0.8 });
       dropSkid();
     } else if (SFX.drift) {
@@ -1191,16 +1213,23 @@ renderer.setAnimationLoop(() => { try {
   } else if (drive.model === 'official' && !driftingNow) {
     // 官方稳态转向(deob L24237+L23407): 前/后轮力矩平衡 => ω = δ·v/(2·Pr), Pr=0.5(轴距1.0);
     // δ = steer·10°·exp(-|v|/22.25)。旧实现恒定3rad/s(半径15m@162km/h)是转弯过快根因。
+    // cornerDrawFactor(0.18, L24251): 转弯回正拖拽 0.18·|v·ω|
     const maxRad = 10 * Math.PI / 180;
     const angle = drive.steer * maxRad * Math.exp(-Math.abs(drive.speed) / OFFICIAL.steerConstraint);
-    if (Math.abs(drive.speed) > 0.1)
-      drive.heading += Math.abs(drive.speed) * Math.tan(angle) / 1.0 * dt * Math.sign(drive.speed);
+    if (Math.abs(drive.speed) > 0.1) {
+      const w = Math.abs(drive.speed) * Math.tan(angle) / 1.0 * Math.sign(drive.speed);
+      drive.heading += w * dt;
+      drive.speed -= Math.sign(drive.speed) * 0.18 * Math.abs(drive.speed * w) * dt;
+    }
   } else if (!driftingNow) {
     // 测试模型同样套用官方稳态转向角(原来恒定 steerRate=3 rad/s 过快)
     const maxRad = 10 * Math.PI / 180;
     const angle = drive.steer * maxRad * Math.exp(-Math.abs(drive.speed) / OFFICIAL.steerConstraint);
-    if (Math.abs(drive.speed) > 0.1)
-      drive.heading += Math.abs(drive.speed) * Math.tan(angle) / 1.0 * dt * Math.sign(drive.speed);
+    if (Math.abs(drive.speed) > 0.1) {
+      const w = Math.abs(drive.speed) * Math.tan(angle) / 1.0 * Math.sign(drive.speed);
+      drive.heading += w * dt;
+      drive.speed -= Math.sign(drive.speed) * 0.18 * Math.abs(drive.speed * w) * dt;
+    }
   }
   // 车移动(数据空间 z-up -> 用一个地面 Group 载具: kart 已在 zup_root 下, 直接动 kartRoot)
   if (kartRoot && Math.abs(drive.speed) > 0.02) {
