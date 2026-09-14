@@ -1073,3 +1073,28 @@ Port0/FirePort0/... 属性;attachmentNodes = 按名字在模型树找节点。
 - **视距**: TrackObject camera far=400 + 线性雾 start0.5~end1.0(即 200-400)。
 - **含义**: 官方世界是"大世界小车"——186km/h(51.7u/s) 跑一圈需 ~10min, 游戏观感靠雾和宽路支撑。
   kart.html 测试赛道已按此标定: 10020x6020 环(圈长约 31400u), 路宽 20, 雾 200-400, kart 不变。
+
+## 35. 漂移/集气/喷气/围栏 实现记录(2026-09-14, kart.html)
+
+> 官方语义来源: §A.15/A.3(FUNCTIONS_DETAIL), 数值来源 kartspec id=1(cotton1)。每项均溯源。
+
+- **物理底座**: 2D 矢量物理——速度向量 (velX,velZ) 每帧分解为 前向 vf + 侧向 vl;
+  侧向按抓地指数衰减(正常 9.0/s, 漂移 4.5/s = 后轮抓地降低的 driftSlipFactor 语义);
+  推力/刹车/阻力(线性 3 + 二次 0.75)/质量 100 全部 kartspec 真值。
+  移动沿速度向量, 车体朝向独立(heading)——漂移侧滑姿态的来源。速度硬帽 120m/s 仅防简化模型失控。
+- **转向**: 官方自行车模型 maxSteerDeg=10°, 角 = steer*10°*exp(-|vf|/22.25), 角速度 = vf*tan(角)/轴距 1.3。
+  漂移中自行车转向让位, 由漂移横摆接管(避免双重旋转磨光速度)。
+- **漂移**: Shift+油门+方向(speed>3) -> triggerPhase 0.2s(driftTrigTime, 甩头 0.35rad) ->
+  activeDrift(横摆 0.85rad/s, 方向键调节系数 1±0.7, 反打拉直) -> 松键 decay 0.4s 尾滑 ->
+  commit 集气。触发甩头使速度方向滞后于车头 -> 自然产生侧滑 vl(官方轮胎力学的等效简化)。
+- **集气**: dt*vl^2(侧向速度平方=官方 localRightSpeed^2), 时间加权 前0.2s x3 / 0.5s x1.5 / 之后 /(2t);
+  满槽(driftMaxGauge 归一化 1)填氮气格(speedSlotCapacity=2)。
+- **连喷**: 漂移 decay 尾窗 500ms 内 forward-down 边沿(重踩油门) -> state 2, 推力 x1.2。
+  油门按住不算——必须重按(edge 触发)。
+- **大喷**: Ctrl 且槽首=6 -> 消耗槽, state 3, 3000ms(normalBoosterTime), 推力 x1.494(boostAccelFactor)。
+- **轮胎印**: 侧滑(漂移中或 |vl|>3 且速度>4)时, 每帧把两个后轮"上一帧->当前帧"位置连成线段
+  (InstancedMesh 环形缓冲 800), 方向=轮胎实际移动方向, 天然连续(官方 effect/drift 连续刮痕语义)。
+- **围栏**: 车到中心线折线的垂直距离(routeDist 前后段投影)跨越 10.4 时, 按官方墙面语义反弹
+  (法向分量 x(-0.3) 反转, 切向保留); 跳起(airY>0.9)可越; 弹回后 prevLat 重置为内侧防误判。
+- **速度表**: 官方 cotton 皮肤(gui_tachometer.rho 解包)1:1 —— 表盘 sprite/双指针/CharPanel 数字。
+  指针 Graduation: -90~180deg 对应 0~375km/h; 表显 km/h = |v|*3.6。
