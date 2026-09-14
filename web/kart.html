@@ -1278,10 +1278,29 @@ renderer.setAnimationLoop(() => { try {
              * (0.35 + 0.65 * Math.min(1, Math.abs(drive.speed) / 15));
       }
       drive.heading += yaw * dt;
-      // 速度衰减 = SHIFT衰减滑块(默认8%/s); v2 额外按住递增(每秒+8%, 上限25%)
-      const decay = drive.driftMode === 'v2'
+      // 速度衰减 = SHIFT衰减滑块 × 双胎迹收敛因子(用户机制):
+      // 两后轮印越平行衰减越小(平行滑), 越靠近/收敛衰减越大(急漂磨速)
+      let decay = drive.driftMode === 'v2'
         ? Math.min(0.25, drive.shiftDecay + 0.08 * hold)
         : drive.shiftDecay;
+      if (kartRoot) {
+        const fx2 = Math.sin(drive.heading), fz2 = Math.cos(drive.heading);
+        const rgx = fz2, rgz = -fx2;
+        const lx = kartRoot.position.x - fx2 * 0.5 - rgx * 0.42;
+        const lz = kartRoot.position.z - fz2 * 0.5 - rgz * 0.42;
+        const rxp = kartRoot.position.x - fx2 * 0.5 + rgx * 0.42;
+        const rzp = kartRoot.position.z - fz2 * 0.5 + rgz * 0.42;
+        if (drive.prevWL) {
+          const distNow = Math.hypot(lx - rxp, lz - rzp);
+          const distPrev = Math.hypot(drive.prevWL.lx - rxp, drive.prevWL.lz - rzp);
+          const move = Math.hypot(lx - drive.prevWL.lx, lz - drive.prevWL.lz)
+                     + Math.hypot(rxp - drive.prevWL.rx, rzp - drive.prevWL.rz);
+          // 收敛度 = 印距缩短量 / 轮印位移量, [-1,1]: 0=平行, 正=靠近, 负=张开
+          const conv = move > 0.01 ? Math.max(-1, Math.min(1, (distPrev - distNow) / move)) : 0;
+          decay *= conv > 0 ? 1 + 2 * conv : 1 + 0.5 * conv;   // 收敛最高×3, 张开最低×0.5
+        }
+        drive.prevWL = { lx, lz, rx: rxp, rz: rzp };
+      }
       drive.speed -= Math.sign(drive.speed) * Math.abs(drive.speed) * decay * dt;
       // decay 跟随 0.9/s(漂移中1.8): 滑角缓慢衰减,
       // 滑行时长 ≈ (松Shift时滑角 - 改出阈值) / 0.9 —— 阈值越小滑行越久
