@@ -910,12 +910,6 @@ function updateTacho() {
   gaugeNeedle.style.transform = 'rotate(' + gdeg + 'deg)';
 }
 
-// 漂移三阶段判定(加速段早期就要用, 故为函数)
-function D_phase() {
-  const p = drive.drift.phase;
-  return p === 'trigger' || p === 'active' || p === 'decay';
-}
-
 // 碰撞反弹: 旧标量路径翻 drive.speed; 新矢量路径按同系数衰减世界速度向量
 function bounceVel(k) {
   if (drive.newphys) {
@@ -1051,7 +1045,6 @@ renderer.setAnimationLoop(() => { try {
   const accel = 6, maxSpeed = 9, boostMax = 20, steerRate = 3;
   const up = keys['ArrowUp'] || keys['w'], down = keys['ArrowDown'] || keys['s'];
   const left = keys['ArrowLeft'] || keys['a'], right = keys['ArrowRight'] || keys['d'];
-  const drifting = D_phase();   // 漂移三阶段(供推力折损/velDir 跟随率); D_phase 在底部定义
   drive.boost = drive.state !== 0 && drive.speed > 0.5;   // 喷气中(供火焰/速度表灯)
   // 官方物理: kartspec id=1(cotton1) 真实数值 —— 力/质量 + 二次阻力, 无硬顶
   if (drive.newphys) {
@@ -1063,7 +1056,7 @@ renderer.setAnimationLoop(() => { try {
     if (drive.model === 'official') {
       const boostMul = drive.state === 3 || drive.state === 2 ? OFFICIAL.boostAccelFactor : 1;   // 官方: state1..11 均 boostAccelFactor(L24134), state2 再x1
       let a = 0;
-      if (up) a += OFFICIAL.forwardAccel * boostMul * (drifting ? 0.5 : 1) / OFFICIAL.mass;
+      if (up) a += OFFICIAL.forwardAccel * boostMul / OFFICIAL.mass;
       if (down) {
         if (vf > 0.5) a -= OFFICIAL.gripBrake / OFFICIAL.mass;
         else a -= OFFICIAL.backwardAccel / OFFICIAL.mass;
@@ -1123,9 +1116,7 @@ renderer.setAnimationLoop(() => { try {
     if (up) {
       const boostMul = drive.state === 3 || drive.state === 2 ? OFFICIAL.boostAccelFactor
                      : 1;   // 官方: state1..11 均 boostAccelFactor(L24134), state2 再x1
-      // 漂移 = "半油门"(用户模型: 漂移减速感同松油门过弯; 滑移功消耗推力)
-      const driftThrustMul = drifting ? 0.5 : 1;
-      a += OFFICIAL.forwardAccel * boostMul * driftThrustMul / OFFICIAL.mass;
+      a += OFFICIAL.forwardAccel * boostMul / OFFICIAL.mass;
     }
     if (down) {
       if (drive.speed > 0.5) a -= OFFICIAL.gripBrake / OFFICIAL.mass;   // 行进中按↓ = 刹车
@@ -1197,10 +1188,10 @@ renderer.setAnimationLoop(() => { try {
         const vlOld = Math.abs(drive.speed * Math.sin(drive.heading - drive.velDir));   // 侧向速度
         const vl = drive.newphys ? Math.abs(drive.slipVl || 0) : vlOld;
         D.elapsed += dt;
-        // 官方原式 vl²·dt(L24365); k=官方内速单位标定(内速单位未知), 按
-        // "c1 5-6 次最佳化漂移集满 4300" 用户基准标定。转向统一迟钝化后平衡滑角变小
-        // (实测 0.8s 漂移单次 0.05@k2.8), k=11.2 -> 典型漂移 0.15~0.25, 5-8 次集满
-        const s = vl * vl * dt * 11.2;
+        // 官方原式 vl²·dt(L24365); k=官方内速单位标定(内速单位未知, 按
+        // "c1 5-6 次最佳化漂移集满 4300" 用户基准标定: 150km/h 强漂移(vl≈16,0.6s,w̄1.5)
+        // 单次 ≈ 16²·0.6·1.5·2.8 ≈ 645 ≈ 4300/6.7)
+        const s = vl * vl * dt * 2.8;
         const w = D.elapsed < 0.2 ? 3 : D.elapsed < 0.5 ? 1.5 : 1 / (2 * D.elapsed);
         D.pending += s * w;
       }
@@ -1209,9 +1200,18 @@ renderer.setAnimationLoop(() => { try {
     // **漂移状态不由 Shift 维持**(官方 drift-stop 只结束 activeDrift, 滑行分支继续);
     // 结束条件 = 反向拉车头把滑角拉过零(L24242 正常分支接管)——反打时低抓地产生
     // 强离心外滑, 弧线向外荡, 正确手法因此不撞墙。
-    // 漂移(用户模型) = "松油门抓地过弯"的减速感 + 丧失部分抓地(velDir 跟随 1.8) + 集气/小喷。
-    // 转向横摆统一走下方动态转向力(同一套, 迟钝); 速度衰减 = 半油门 + 阻力 + cornerDraw, 无固定衰减。
+    const drifting = D.phase === 'trigger' || D.phase === 'active' || D.phase === 'decay';
     if (drifting) {
+      // 横摆率: 同向拉 = 加深漂移; **反向拉 = 车头被拉回(可越过速度方向, 系数>1)**
+      const steerMod = 1 + drive.steer * D.dir * 1.5;
+      const base = D.phase === 'trigger' ? 1.2
+                 : D.phase === 'active' ? 0.55 : 0.45;   // decay: 轻点漂移的 0.4s 滑行保持弧线(最佳化漂移)
+      const yaw = D.dir * base * Math.min(1, Math.abs(drive.speed) / 15) * steerMod;
+      drive.heading += yaw * dt;
+      // 漂移速度衰减(用户判定: 按住 Shift 漂移必须明显减速, 量级 10-20km/h/次):
+      // 速度比例衰减 8%/s —— 172km/h 漂 1s ≈ -13km/h, 80km/h 漂 1s ≈ -6km/h, 随车速走
+      if (!drive.newphys)
+        drive.speed -= Math.sign(drive.speed) * Math.abs(drive.speed) * 0.08 * dt;
       // 滑角过零 = 反拉到位, 漂移消失(commit 集气 + 开小喷尾窗)。
       // hadSlip 锁存: 必须先真正甩出滑角(>0.12rad)才允许反拉结束,
       // 否则上次反拉残留的负滑角会让新漂移刚建立就被误判结束(集气 0 元凶)
@@ -1262,10 +1262,11 @@ renderer.setAnimationLoop(() => { try {
   }
     const steerTarget = left ? 1 : right ? -1 : 0;
   drive.steer += (steerTarget - drive.steer) * Math.min(1, 8 * dt);
+  const driftingNow = drive.drift.phase !== 'none';
   if (drive.newphys) {
-    // 新矢量模型: 转向已在矢量分支; 侧滑超阈值补轮胎印
+    // 新矢量模型: 转向已在矢量分支(稳态转向/漂移横摆); 侧滑超阈值补轮胎印
     if (Math.abs(drive.slipVl || 0) > 3 && Math.abs(drive.speed) > 4) dropSkid();
-  } else {
+  } else if (!driftingNow) {
     // 官方动态轮胎力模型(同矢量分支, L24237+L23407+L24354), 标量等价形式:
     // 侧滑角 slip = heading - velDir; 车头角速度 ω 由前后轮力矩积分;
     // 速度方向 velDir 由侧向力(向心力)旋转; cornerDraw(0.18) 拖拽减速
