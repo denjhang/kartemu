@@ -1200,17 +1200,17 @@ renderer.setAnimationLoop(() => { try {
     // **漂移状态不由 Shift 维持**(官方 drift-stop 只结束 activeDrift, 滑行分支继续);
     // 结束条件 = 反向拉车头把滑角拉过零(L24242 正常分支接管)——反打时低抓地产生
     // 强离心外滑, 弧线向外荡, 正确手法因此不撞墙。
-    // 官方漂移两阶段(L24205-24242):
-    //  trigger/active: 轮胎力 ×0.2×envelope(≈0) = 冰面 —— 横摆保持、几乎不掉速(黄油);
-    //  松 Shift(decay): activeDrift=false, 正常抓地回归(下方动态力模型接管),
-    //    侧向速度分量被真实回收 => 肉眼可见 10-20km/h 衰减; 反打方向加速回收。
-    if (D.phase === 'trigger' || D.phase === 'active') {
-      // 冰面横摆: 同向拉 = 加深; 反向拉 = 车头被拉回(系数>1 可越过速度方向)
+    const drifting = D.phase === 'trigger' || D.phase === 'active' || D.phase === 'decay';
+    if (drifting) {
+      // 横摆率: 同向拉 = 加深漂移; **反向拉 = 车头被拉回(可越过速度方向, 系数>1)**
       const steerMod = 1 + drive.steer * D.dir * 1.5;
-      const base = D.phase === 'trigger' ? 1.2 : 0.55;
+      const base = D.phase === 'trigger' ? 1.2
+                 : D.phase === 'active' ? 0.55 : 0.45;   // decay: 轻点漂移的 0.4s 滑行保持弧线(最佳化漂移)
       const yaw = D.dir * base * Math.min(1, Math.abs(drive.speed) / 15) * steerMod;
       drive.heading += yaw * dt;
-      // 冰面: 几乎无衰减(官方 0.2×envelope≈0 抓地), 保留 0.15m/s² 象征性滚阻
+      // 漂移速度衰减(用户判定"黄油在锅上打滑"= 损耗极小): 官方漂移轮胎力 ×0.2 后
+      // F≈98N, 滑移功率 F·(v·θ)/(m·v) ≈ 0.1 m/s² —— 此前 v·ω²/1.8 公式在 ω=0.8 时
+      // 达 17m/s², 放大 170 倍。按官方推导量级取 0.15 m/s²。
       if (!drive.newphys)
         drive.speed -= Math.sign(drive.speed) * 0.15 * dt;
       // 滑角过零 = 反拉到位, 漂移消失(commit 集气 + 开小喷尾窗)。
@@ -1218,7 +1218,7 @@ renderer.setAnimationLoop(() => { try {
       // 否则上次反拉残留的负滑角会让新漂移刚建立就被误判结束(集气 0 元凶)
       const slip = (drive.heading - drive.velDir) * D.dir;
       if (slip > 0.12) D.hadSlip = true;
-      if (D.phase === 'active' && drive.speed > 3 && D.hadSlip && slip < 0) {
+      if (D.phase !== 'trigger' && drive.speed > 3 && D.hadSlip && slip < 0) {
         D.phase = 'none';
         drive.gauge = Math.min(OFFICIAL.driftMaxGauge, drive.gauge + D.pending);
         D.pending = 0;
@@ -1235,8 +1235,12 @@ renderer.setAnimationLoop(() => { try {
       drive.gauge = Math.min(OFFICIAL.driftMaxGauge, drive.gauge + D.pending);
       D.pending = 0;
     }
-    // velDir 硬跟随 lerp 已删除: 非漂移/decay 的 velDir 旋转由官方动态轮胎力模型
-    // (下方 !driftingNow 分支)真实积分; 冰面漂移(trigger/active) velDir 冻结 = 侧滑
+    // 移动方向以抓地速率追随车头(漂移时抓地低 = 侧滑; 平时迅速对齐)
+    // 新矢量模型不用此硬跟随 —— 侧向速度由抓地指数衰减自然消耗
+    if (!drive.newphys) {
+      const gripRate = drifting ? 1.8 : 10;
+      drive.velDir = angleLerp(drive.velDir, drive.heading, 1 - Math.exp(-gripRate * dt));
+    }
     // 喷气状态机
     if (drive.stateMs > 0) {
       drive.stateMs -= dt * 1000;
@@ -1259,8 +1263,7 @@ renderer.setAnimationLoop(() => { try {
   }
     const steerTarget = left ? 1 : right ? -1 : 0;
   drive.steer += (steerTarget - drive.steer) * Math.min(1, 8 * dt);
-  // decay 不算 drifting: 正常抓地力模型接管, 侧滑被真实回收(10-20km/h 衰减涌现)
-  const driftingNow = drive.drift.phase === 'trigger' || drive.drift.phase === 'active';
+  const driftingNow = drive.drift.phase !== 'none';
   if (drive.newphys) {
     // 新矢量模型: 转向已在矢量分支(稳态转向/漂移横摆); 侧滑超阈值补轮胎印
     if (Math.abs(drive.slipVl || 0) > 3 && Math.abs(drive.speed) > 4) dropSkid();
