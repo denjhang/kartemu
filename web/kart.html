@@ -594,7 +594,7 @@ const drive = { speed: 0, steer: 0, heading: 0, boost: false, crashUntil: 0, tim
   prevX: 0, prevZ: 0, prevLat: 0, airY: 0, routeHint: -1, model: 'official', velDir: 0, prevUp: false,
   newphys: false, vx: 0, vz: 0, yawRate: 0,   // yawRate: 横摆角速度(官方动态转向状态, rad/s)
   // 漂移/集气/喷气(kartspec id=1 speedType 竞速行: driftTrigTime .2s, driftMaxGauge 归一化为 1, 槽容量 2)
-  drift: { phase: 'none', dir: 0, timer: 0, elapsed: 0, pending: 0 },
+  drift: { phase: 'none', dir: 0, timer: 0, elapsed: 0, pending: 0, hadSlip: false },
   gauge: 0, slots: [-1, -1], item: 0,   // item: 道具槽图标 id(0=空; 道具系统未接入, 官方空槽即空相框)
   state: 0, stateMs: 0, tailMs: 0 };
 window.__drive = drive;
@@ -1150,7 +1150,7 @@ renderer.setAnimationLoop(() => { try {
     drive.prevShift = driftKey;
     if (shiftEdge && D.phase === 'none' && left !== right) {
       D.phase = 'trigger'; D.dir = left ? 1 : -1; D.timer = 0.2;
-      D.elapsed = 0; D.pending = 0;
+      D.elapsed = 0; D.pending = 0; D.hadSlip = false;
       // 触发甩头: 新矢量模型不给瞬时踢角(会在高速下瞬间产生 ~20m/s 侧向速度=必然撞墙),
       // 甩头由下方 trigger 阶段的渐进横摆(0.2s 内 ~0.24rad)完成, 侧滑随抓地滞后自然建立
       if (!drive.newphys) drive.heading += D.dir * 0.28;
@@ -1213,9 +1213,12 @@ renderer.setAnimationLoop(() => { try {
       // 达 17m/s², 放大 170 倍。按官方推导量级取 0.15 m/s²。
       if (!drive.newphys)
         drive.speed -= Math.sign(drive.speed) * 0.15 * dt;
-      // 滑角过零 = 反拉到位, 漂移消失(commit 集气 + 开小喷尾窗)
+      // 滑角过零 = 反拉到位, 漂移消失(commit 集气 + 开小喷尾窗)。
+      // hadSlip 锁存: 必须先真正甩出滑角(>0.12rad)才允许反拉结束,
+      // 否则上次反拉残留的负滑角会让新漂移刚建立就被误判结束(集气 0 元凶)
       const slip = (drive.heading - drive.velDir) * D.dir;
-      if (D.phase !== 'trigger' && drive.speed > 3 && slip < 0) {
+      if (slip > 0.12) D.hadSlip = true;
+      if (D.phase !== 'trigger' && drive.speed > 3 && D.hadSlip && slip < 0) {
         D.phase = 'none';
         drive.gauge = Math.min(OFFICIAL.driftMaxGauge, drive.gauge + D.pending);
         D.pending = 0;
