@@ -1339,8 +1339,9 @@ renderer.setAnimationLoop(() => { try {
   }
     const steerTarget = left ? 1 : right ? -1 : 0;
   drive.steer += (steerTarget - drive.steer) * Math.min(1, 8 * dt);
-  // 转向力模型(漂移/抓地共用同一套迟钝力; 漂移的急缓来自分量/启发式与推力折损)
-  {
+  // 转向力模型: 仅抓地时运行; 漂移/滑行期横摆由启发式独占 ——
+  // 否则双旋转叠加, 滑角只增不减 => 永远无法改出
+  if (!drifting) {
     // 官方动态轮胎力模型(同矢量分支, L24237+L23407+L24354), 标量等价形式:
     // 侧滑角 slip = heading - velDir; 车头角速度 ω 由前后轮力矩积分;
     // 速度方向 velDir 由侧向力(向心力)旋转; cornerDraw(0.18) 拖拽减速
