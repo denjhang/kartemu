@@ -72,6 +72,7 @@
       <label><input type="radio" name="cam" value="free">自由</label>
     </label>
     <label><input type="checkbox" id="cb-official" checked>官方物理(cotton1)</label>
+    <label><input type="checkbox" id="cb-vector">新漂移/转弯(实验A/B)</label>
     <label>人物动作 <select id="anim-sel">
       <option value="auto" selected>自动(随驾驶状态)</option>
       <option value="f40">f40 直行骑乘循环 1.37s</option>
@@ -365,37 +366,51 @@ function clearOfRoad(x, z, minDist) {
   return bd >= minDist * minDist;
 }
 
-// 轮胎印(漂移): 官方 effect/drift 语义, 预分配 800 个四边形环形覆写
-const SKID_MAX = 800;
-const skidGeo = new THREE.PlaneGeometry(0.16, 1.2);
-skidGeo.rotateX(-Math.PI / 2);
-const skids = new THREE.InstancedMesh(skidGeo,
-  new THREE.MeshBasicMaterial({ color: 0x181818, transparent: true, opacity: 0.5, depthWrite: false }),
-  SKID_MAX);
-skids.frustumCulled = false;
-skids.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
-scenery.add(skids);
-let skidHead = 0, skidTimer = 0;
-function dropSkid(dt) {
-  if (!kartRoot || drive.speed < 5) return;
-  skidTimer -= dt;
-  if (skidTimer > 0) return;
-  skidTimer = 0.028;
-  const M = new THREE.Matrix4(), Q = new THREE.Quaternion(), E = new THREE.Euler(),
-        S1 = new THREE.Vector3(1, 1, 1), P = new THREE.Vector3();
-  E.set(0, drive.heading, 0);
-  Q.setFromEuler(E);
-  const fx = Math.sin(drive.heading), fz = Math.cos(drive.heading);
-  const rx = fz, rz = -fx;
-  for (const side of [1, -1]) {                     // 后轮双印
-    P.set(kartRoot.position.x - fx * 0.5 + rx * 0.42 * side,
-          kartRoot.position.y + 0.03,
-          kartRoot.position.z - fz * 0.5 + rz * 0.42 * side);
-    M.compose(P, Q, S1);
-    skids.setMatrixAt(skidHead % SKID_MAX, M);
-    skidHead++;
+// 轮胎印(漂移): 沿后轮实际行进方向的连续三角条带(非离散贴片, 官方 effect/drift 语义)
+// 每帧取后轮触地点, 与上一点连成四边形(宽度垂直于两点连线) → 印迹连续跟随轮胎路径
+const SKID_MAX = 800;                                    // 每侧条带段数(环形覆写, 最旧的被覆盖)
+const SKID_W = 0.16;
+const skids = [0, 1].map(() => {
+  const g = new THREE.BufferGeometry();
+  const pos = new Float32Array(SKID_MAX * 6 * 3);        // 每段2三角形=6顶点
+  g.setAttribute('position', new THREE.BufferAttribute(pos, 3).setUsage(THREE.DynamicDrawUsage));
+  g.setDrawRange(0, 0);
+  const m = new THREE.Mesh(g, new THREE.MeshBasicMaterial({
+    color: 0x181818, transparent: true, opacity: 0.5, depthWrite: false, side: THREE.DoubleSide }));
+  m.frustumCulled = false;
+  scenery.add(m);
+  return { pos, mesh: m, head: 0, last: null };
+});
+function dropSkid() {
+  if (!kartRoot || drive.speed < 5 || kartRoot.position.y > 0.9) {
+    for (const s of skids) s.last = null;                // 条带中断
+    return;
   }
-  skids.instanceMatrix.needsUpdate = true;
+  const fx = Math.sin(drive.heading), fz = Math.cos(drive.heading);
+  for (let w = 0; w < 2; w++) {                          // 后轮双印
+    const s = skids[w], side = w === 0 ? 1 : -1;
+    const wx = kartRoot.position.x - fx * 0.5 + fz * 0.42 * side;
+    const wz = kartRoot.position.z - fz * 0.5 - fx * 0.42 * side;
+    if (s.last) {
+      const dx = wx - s.last.x, dz = wz - s.last.z;
+      const len = Math.hypot(dx, dz);
+      if (len > 0.05 && len < 2) {                       // 过近跳过; 过远(瞬移/复位)断带重起
+        const nx = -dz / len * SKID_W / 2, nz = dx / len * SKID_W / 2;
+        const y = kartRoot.position.y + 0.03;
+        const p = s.pos, i = (s.head % SKID_MAX) * 18;
+        p[i]   = s.last.x - nx; p[i+1]  = y; p[i+2]  = s.last.z - nz;
+        p[i+3] = s.last.x + nx; p[i+4]  = y; p[i+5]  = s.last.z + nz;
+        p[i+6] = wx - nx;       p[i+7]  = y; p[i+8]  = wz - nz;
+        p[i+9] = s.last.x + nx; p[i+10] = y; p[i+11] = s.last.z + nz;
+        p[i+12]= wx + nx;       p[i+13] = y; p[i+14] = wz + nz;
+        p[i+15]= wx - nx;       p[i+16] = y; p[i+17] = wz - nz;
+        s.head++;
+        s.mesh.geometry.setDrawRange(0, Math.min(s.head, SKID_MAX) * 6);
+        s.mesh.geometry.attributes.position.needsUpdate = true;
+      } else if (len >= 2) s.last = null;
+    }
+    s.last = { x: wx, z: wz };
+  }
 }
 
 // 出生点/朝向 = 官方路线首帧
@@ -528,6 +543,7 @@ addEventListener('keydown', e => {
 addEventListener('keyup', e => { keys[e.key] = false; });
 const drive = { speed: 0, steer: 0, heading: 0, boost: false, crashUntil: 0, time: 0, reversePhase: 'none', vy: 0,
   prevX: 0, prevZ: 0, prevLat: 0, airY: 0, routeHint: -1, model: 'official', velDir: 0, prevUp: false,
+  newphys: false, vx: 0, vz: 0,   // 新矢量模型(实验): 世界速度向量; newphys=false 走旧标量路径
   // 漂移/集气/喷气(kartspec id=1 speedType 竞速行: driftTrigTime .2s, driftMaxGauge 归一化为 1, 槽容量 2)
   drift: { phase: 'none', dir: 0, timer: 0, elapsed: 0, pending: 0 },
   gauge: 0, slots: [-1, -1],
@@ -585,6 +601,14 @@ function sfxEngine(speed) {
 }
 document.getElementById('cb-official').onchange = e => {
   drive.model = e.target.checked ? 'official' : 'test';
+};
+// 新漂移/转弯(实验): 2D 矢量轮胎模型(UNDERSTOOD §35)——旧标量代码原样保留做 A/B 对照
+document.getElementById('cb-vector').onchange = e => {
+  drive.newphys = e.target.checked;
+  if (drive.newphys) {   // 从旧标量状态无缝迁移
+    drive.vx = Math.sin(drive.velDir) * drive.speed;
+    drive.vz = Math.cos(drive.velDir) * drive.speed;
+  }
 };
 // 路线横向碰撞: |lat| 相对路缘 10.4 的跨越检测(跳起可越过), 详见渲染循环
 let kartRoot, rekart, handleChild, wheelChildren = [], mainAngle = 0;
@@ -677,20 +701,85 @@ Promise.all([
   balloonT = 0;
   parts.balloon = balloonNode;
 
-  // 喷火(fire0 排气口: 车尾), 官方 booster 语义: 加速期火焰持续
+  // 喷火: 官方 port0 排气口(gltf port0 节点, ReKart 数据空间 +Y=车尾)
+  // 溯源: deob L14035 端口表 / kart.gltf port0 matrix 平移 (0.198,0.822,0.231)
+  // 火焰锥沿数据 +Y(车尾) 水平向后喷, 锥尖朝外
   flames = [];
-  for (const fx of [-0.28, 0.28]) {
-    const flame = new THREE.Mesh(
-      new THREE.ConeGeometry(0.07, 0.5, 8, 1, true),
-      new THREE.MeshBasicMaterial({ color: 0xff8822, transparent: true,
-        opacity: 0.85, blending: THREE.AdditiveBlending, depthWrite: false,
-        side: THREE.DoubleSide }));
-    flame.rotation.x = Math.PI / 2;          // 沿 -Y(车尾)喷射
-    flame.position.set(fx, -0.95, 0.35);     // 数据空间: 车尾 y<0
-    flame.visible = false;
-    rekart.add(flame);
-    flames.push(flame);
+  const PORT0 = { x: 0.198, y: 0.822, z: 0.231 };
+  {
+    // 官方喷火是 effect/boosterWave/*.1s 动画(贴图 booster/boosterFlare), 本地未解包,
+    // 用三层锥近似: 外橙/中黄/白芯, 长度渐短, 喷火时各自抖动(长度+轻微横向摆动)
+    const mk = (r, len, color, op) => {
+      const f = new THREE.Mesh(
+        new THREE.ConeGeometry(r, len, 8, 1, true),
+        new THREE.MeshBasicMaterial({ color, transparent: true, opacity: op,
+          blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide }));
+      // 锥默认锥尖朝 +Y = 数据空间车尾方向, 无需旋转
+      f.visible = false;
+      rekart.add(f);
+      return f;
+    };
+    const L = [[0.10, 1.15, 0xff6618, 0.55], [0.068, 0.85, 0xffaa33, 0.75], [0.04, 0.55, 0xfff2b0, 0.95]];
+    for (const [r, len, color, op] of L) {
+      const f = mk(r, len, color, op);
+      f.position.set(PORT0.x, PORT0.y + len / 2, PORT0.z);
+      f.userData.baseLen = len;
+      f.userData.portZ = PORT0.z;   // 渲染循环在顶层作用域, 不能引用本回调局部的 PORT0
+      flames.push(f);
+    }
   }
+
+  // 排气(喷气): 官方 ReExhaustEffect(deob L8189-8301)简化移植, 常开
+  // 参数溯源: 发射间隔 max(0,120-kmh*0.3)ms; 排气初速5(方向=车局部(±0.1,1,±0.1)≈水平向后)
+  // + 车速跟随项|v|(粒子被甩在车后, 0.9/s 衰减); alpha 125/255 衰减0.75/s(寿命~167ms);
+  // 尺寸 0.13*scale, scale+7/s; billboard 朝向相机; 官方贴图 effect/exhaust/exhaust.png
+  // 本地未解包: 官方观感是"很轻的少量灰色废气", 用淡灰低不透明度径向雾代替(白核会 additive 过曝)
+  const exhaustTex = (() => {
+    const c = document.createElement('canvas'); c.width = c.height = 64;
+    const g = c.getContext('2d');
+    const rg = g.createRadialGradient(32, 32, 2, 32, 32, 30);
+    rg.addColorStop(0, 'rgba(190,190,195,0.55)');
+    rg.addColorStop(0.4, 'rgba(180,180,185,0.22)');
+    rg.addColorStop(1, 'rgba(170,170,175,0)');
+    g.fillStyle = rg; g.fillRect(0, 0, 64, 64);
+    const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace;
+    return t;
+  })();
+  const EX = { MAX: 10, SIZE: 0.13, ALPHA0: 125 / 255, ALPHA_DECAY: 0.75,
+               SPEED0: 5, VSPD_DECAY: 0.9, SCALE_GROW: 7 };
+  window.__exhaust = {
+    EX,
+    parts: [],                               // {pos,dir,espd,vs,vsDir,scale,rscale,alpha}
+    lastEmit: 0,
+    portObj: new THREE.Object3D(),
+    geo: new THREE.BufferGeometry(),
+  };
+  const exh = window.__exhaust;
+  exh.portObj.position.set(PORT0.x, PORT0.y, PORT0.z);
+  rekart.add(exh.portObj);
+  exh.geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(EX.MAX * 4 * 3), 3).setUsage(THREE.DynamicDrawUsage));
+  { // 每粒子四边形角点 uv: (-1,-1)(1,-1)(-1,1)(1,1) -> (0,0)(1,0)(0,1)(1,1), 官方 U0(L8183)
+    const uv = new Float32Array(EX.MAX * 4 * 2);
+    for (let i = 0; i < EX.MAX; i++)
+      [0, 1, 2, 3].forEach(k => { uv[i * 8 + k * 2] = k & 1; uv[i * 8 + k * 2 + 1] = k >> 1; });
+    exh.geo.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
+  }
+  exh.geo.setAttribute('color', new THREE.BufferAttribute(new Float32Array(EX.MAX * 4 * 4), 4).setUsage(THREE.DynamicDrawUsage));
+  exh.geo.setIndex([].concat(...Array.from({ length: EX.MAX }, (_, i) => [i * 4, i * 4 + 2, i * 4 + 1, i * 4 + 2, i * 4 + 3, i * 4 + 1])));
+  exh.geo.setDrawRange(0, 0);
+  const exhMesh = new THREE.Mesh(exh.geo, new THREE.ShaderMaterial({
+    uniforms: { map: { value: exhaustTex } },
+    // 注意: ShaderMaterial 会自动前置声明 attribute position/uv, 不能重复声明(会导致编译错误→粒子完全不可见)
+    vertexShader: `attribute vec4 color; varying vec2 vUv; varying vec4 vColor;
+      void main(){ vUv=uv; vColor=color; gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0); }`,
+    fragmentShader: `uniform sampler2D map; varying vec2 vUv; varying vec4 vColor;
+      void main(){ gl_FragColor=texture2D(map,vUv)*vColor; }`,
+    transparent: true, depthWrite: false, depthTest: true, side: THREE.DoubleSide,
+    blending: THREE.AdditiveBlending,
+  }));
+  exhMesh.frustumCulled = false;
+  exhMesh.renderOrder = 5;
+  scene.add(exhMesh);
 
   const box = new THREE.Box3().setFromObject(kart.scene);
   const ctr = box.getCenter(new THREE.Vector3());
@@ -757,6 +846,77 @@ function updateTacho() {
   // 集气指针(官方 Graduation boostHand: minDegree=50 maxDegree=360, 表量程 0~350)
   const gdeg = 50 + Math.min(1, drive.gauge) * 310;
   gaugeNeedle.style.transform = 'rotate(' + gdeg + 'deg)';
+}
+
+// 碰撞反弹: 旧标量路径翻 drive.speed; 新矢量路径按同系数衰减世界速度向量
+function bounceVel(k) {
+  if (drive.newphys) {
+    drive.vx *= k; drive.vz *= k;
+    const fx = Math.sin(drive.heading), fz = Math.cos(drive.heading);
+    drive.speed = Math.hypot(drive.vx, drive.vz)
+      * ((drive.vx * fx + drive.vz * fz) < 0 ? -1 : 1);
+    drive.velDir = Math.atan2(drive.vx, drive.vz);
+  } else drive.speed *= k;
+}
+
+// 排气粒子常开更新: 官方 ReExhaustEffect 语义(deob L8209-8301)
+function updateExhaust(dt) {
+  const exh = window.__exhaust;
+  if (!exh || !kartRoot) return;
+  const kmh = Math.abs(drive.speed) * 3.6;
+  // 发射: 距上次发射超过 max(0, 120 - kmh*0.3) ms 则发射一轮(每个排气口一个粒子)
+  const interval = Math.max(0, 120 - kmh * 0.3);
+  if (drive.time * 1000 - exh.lastEmit >= interval) {
+    exh.lastEmit = drive.time * 1000;
+    exh.portObj.updateWorldMatrix(true, false);
+    const P = new THREE.Vector3(), Q = new THREE.Quaternion();
+    exh.portObj.getWorldPosition(P);
+    rekart.getWorldQuaternion(Q);
+    // 车局部 (±0.1, 1, ±0.1) 归一化 ≈ 水平向后(+Y=车尾)带轻微抖动(L8230-8231)
+    const j1 = Math.random() * 0.2 - 0.1, j2 = Math.random() * 0.2 - 0.1;
+    const dir = new THREE.Vector3(j1, 1, j2).applyQuaternion(Q).normalize();
+    // 初始位置 = 管口 + 排气方向×random(0..0.1)(L8233-8234)
+    P.addScaledVector(dir, Math.random() * 0.1);
+    if (exh.parts.length === exh.EX.MAX) exh.parts.shift();
+    exh.parts.push({
+      pos: P, dir,
+      espd: exh.EX.SPEED0,
+      vs: Math.abs(drive.speed),                       // 车速跟随项: 粒子被甩在车后
+      vsx: Math.sin(drive.heading), vsz: Math.cos(drive.heading),
+      scale: 1, rscale: 1, alpha: exh.EX.ALPHA0,
+    });
+  }
+  // 粒子物理(L8222/L8290-8297): pos += (dir*espd + vsDir*vs)*dt;
+  // espd -= 0.01/s; vs *= 0.9/s; alpha -= 0.75/s; scale += 7/s
+  for (const p of exh.parts) {
+    p.pos.addScaledVector(p.dir, p.espd * dt)
+        .addScaledVector(new THREE.Vector3(p.vsx, 0, p.vsz), p.vs * dt);
+    p.espd = Math.max(0, p.espd - 0.01 * dt);
+    p.vs *= Math.pow(exh.EX.VSPD_DECAY, dt);
+    p.alpha = Math.max(0, p.alpha - exh.EX.ALPHA_DECAY * dt);
+    p.rscale = p.scale;
+    p.scale += exh.EX.SCALE_GROW * dt;
+  }
+  // billboard 写几何: 相机 right/up 展开四边形(L8248-8264)
+  camera.updateWorldMatrix(true, false);
+  const e = camera.matrixWorld.elements;
+  const camR = new THREE.Vector3(e[0], e[1], e[2]).normalize();
+  const camU = new THREE.Vector3(e[4], e[5], e[6]).normalize();
+  const posAttr = exh.geo.attributes.position, colAttr = exh.geo.attributes.color;
+  exh.parts.forEach((p, i) => {
+    const a = p.alpha;                     // 官方原值 125/255 → 0, 不做补偿(淡灰废气)
+    for (let k = 0; k < 4; k++) {
+      const sx = (k & 1 ? 1 : -1) * exh.EX.SIZE * p.rscale;
+      const sy = (k >> 1 ? 1 : -1) * exh.EX.SIZE * p.rscale;
+      posAttr.setXYZ(i * 4 + k,
+        p.pos.x + camR.x * sx + camU.x * sy,
+        p.pos.y + camR.y * sx + camU.y * sy,
+        p.pos.z + camR.z * sx + camU.z * sy);
+      colAttr.setXYZW(i * 4 + k, 0.78, 0.78, 0.8, a);   // 淡灰(非纯白), additive 不会过曝
+    }
+  });
+  posAttr.needsUpdate = true; colAttr.needsUpdate = true;
+  exh.geo.setDrawRange(0, exh.parts.length * 6);
 }
 
 // ---- 存档: 位置+朝向+视角, localStorage, 刷新自动恢复 ----
@@ -827,7 +987,48 @@ renderer.setAnimationLoop(() => { try {
   // 官方物理: kartspec id=1(cotton1) 真实数值 —— 力/质量 + 二次阻力, 无硬顶
   const OFFICIAL = { mass: 100, forwardAccel: 2160, backwardAccel: 1775, airFriction: 3,
                      dragFactor: 0.75, gripBrake: 2070, boostAccelFactor: 1.494, steerConstraint: 22.25 };
-  if (drive.model === 'official') {
+  if (drive.newphys) {
+    // ---- 新矢量轮胎模型(UNDERSTOOD §35): 速度向量分解前向/侧向, 侧向抓地指数衰减 ----
+    const fx = Math.sin(drive.heading), fz = Math.cos(drive.heading);
+    const rx = fz, rz = -fx;                     // 车体右向(世界)
+    let vf = drive.vx * fx + drive.vz * fz;
+    let vl = drive.vx * rx + drive.vz * rz;
+    if (drive.model === 'official') {
+      const boostMul = drive.state === 3 ? OFFICIAL.boostAccelFactor : drive.state === 2 ? 1.2 : 1;
+      let a = 0;
+      if (up) a += OFFICIAL.forwardAccel * boostMul / OFFICIAL.mass;
+      if (down) {
+        if (vf > 0.5) a -= OFFICIAL.gripBrake / OFFICIAL.mass;
+        else a -= OFFICIAL.backwardAccel / OFFICIAL.mass;
+      }
+      a -= vf * Math.abs(vf) * OFFICIAL.dragFactor / OFFICIAL.mass + vf * OFFICIAL.airFriction / OFFICIAL.mass;
+      vf += a * dt;
+      if (!up && !down && Math.abs(vf) < 0.15) vf = 0;
+      vf = Math.max(vf, -12);
+    } else {
+      const cap = drive.boost ? boostMax : maxSpeed;
+      if (up) vf = Math.min(vf + accel * dt, cap);
+      else if (down) vf = Math.max(vf - accel * 0.7 * dt, -4);
+      else { vf *= 1 - 1.2 * dt; if (Math.abs(vf) < 0.15) vf = 0; }
+    }
+    const Dv = drive.drift, drifting = Dv.phase !== 'none';
+    if (drifting) vf *= 1 - (Dv.phase === 'decay' ? 0.12 : 0.22) * dt;   // 漂移阻力(与旧路径同参数)
+    // 侧向抓地: 正常 9.0/s, 漂移 4.5/s(driftSlipFactor 语义); 反打方向(反甩头)时加倍拉直
+    const grip = !drifting ? 9.0
+      : (drive.steer * Dv.dir < -0.1 ? 9.0 : 4.5);
+    vl *= Math.exp(-grip * dt);
+    // 非漂移转向 = 官方自行车模型(10°, exp(-|vf|/22.25), 轴距1.3); 漂移横摆由漂移状态机接管
+    if (!drifting && Math.abs(vf) > 0.1) {
+      const angle = drive.steer * (10 * Math.PI / 180) * Math.exp(-Math.abs(vf) / OFFICIAL.steerConstraint);
+      drive.heading += Math.abs(vf) * Math.tan(angle) / 1.3 * dt * Math.sign(vf);
+    }
+    drive.vx = fx * vf + rx * vl;
+    drive.vz = fz * vf + rz * vl;
+    drive.slipVl = vl;
+    drive.speed = Math.hypot(drive.vx, drive.vz)
+      * ((drive.vx * fx + drive.vz * fz) < -1e-6 ? -1 : 1);   // 带符号(倒车动画/速度表)
+    drive.velDir = Math.atan2(drive.vx, drive.vz);
+  } else if (drive.model === 'official') {
     let a = 0;
     if (up) {
       const boostMul = drive.state === 3 ? OFFICIAL.boostAccelFactor
@@ -861,8 +1062,9 @@ renderer.setAnimationLoop(() => { try {
     if (driftKey && up && D.phase === 'none' && drive.speed > 3 && left !== right) {
       D.phase = 'trigger'; D.dir = left ? 1 : -1; D.timer = 0.2;
       D.elapsed = 0; D.pending = 0;
-      // 触发踢角: 车头先甩出去, 移动方向因抓地滞后 -> 侧滑
-      drive.heading += D.dir * 0.45;
+      // 触发甩头: 新矢量模型不给瞬时踢角(会在高速下瞬间产生 ~20m/s 侧向速度=必然撞墙),
+      // 甩头由下方 trigger 阶段的渐进横摆(0.2s 内 ~0.35rad)完成, 侧滑随抓地滞后自然建立
+      if (!drive.newphys) drive.heading += D.dir * 0.45;
     }
     if (D.phase === 'trigger') {
       D.timer -= dt;
@@ -885,25 +1087,32 @@ renderer.setAnimationLoop(() => { try {
     // 漂移中: 车头横摆为主(方向键调漂移角), 速度方向以有限抓地跟随 -> 侧滑而不拐墙
     const drifting = D.phase === 'trigger' || D.phase === 'active' || D.phase === 'decay';
     if (drifting) {
-      const steerMod = 1 + drive.steer * D.dir * 1.1;
-      const base = D.phase === 'trigger' ? 1.6 : D.phase === 'active' ? 1.1 : 0.5;
+      // 横摆率: trigger 快(甩头) > active(漂移) > decay(尾滑); 方向键调节漂移紧/松
+      // 新矢量模型: active 基准略降(0.95), 反打方向时抓地加倍拉直(见矢量分支)
+      const steerMod = 1 + drive.steer * D.dir * (drive.newphys ? 0.6 : 1.1);
+      const base = D.phase === 'trigger' ? (drive.newphys ? 1.75 : 1.6)
+                 : D.phase === 'active' ? (drive.newphys ? 0.95 : 1.1) : 0.5;
       drive.heading += D.dir * base * Math.min(1, drive.speed / 15) * steerMod * dt;
-      drive.speed *= 1 - (D.phase === 'decay' ? 0.12 : 0.22) * dt;
+      if (!drive.newphys) drive.speed *= 1 - (D.phase === 'decay' ? 0.12 : 0.22) * dt;   // 新矢量模型在矢量分支内衰减 vf
       if (D.phase !== 'decay') {
         D.elapsed += dt;
         const w = D.elapsed < 0.2 ? 3 : D.elapsed < 0.5 ? 1.5 : 1 / (2 * D.elapsed);
         D.pending += dt * (drive.speed * drive.speed) * 0.0016 * w;
       }
       if (!SFX.drift && SFX.buffers.drift) SFX.drift = sfxPlay('drift', { loop: true, volume: 0.8 });
-      dropSkid(dt);
+      dropSkid();
     } else if (SFX.drift) {
       SFX.drift.stop(); SFX.drift = null;
+      for (const s of skids) s.last = null;              // 漂移结束断带
       drive.gauge = Math.min(1, drive.gauge + D.pending);
       D.pending = 0;
     }
     // 移动方向以抓地速率追随车头(漂移时抓地低 = 侧滑; 平时迅速对齐)
-    const gripRate = drifting ? 1.8 : 10;
-    drive.velDir = angleLerp(drive.velDir, drive.heading, 1 - Math.exp(-gripRate * dt));
+    // 新矢量模型不用此硬跟随 —— 侧向速度由抓地指数衰减自然消耗
+    if (!drive.newphys) {
+      const gripRate = drifting ? 1.8 : 10;
+      drive.velDir = angleLerp(drive.velDir, drive.heading, 1 - Math.exp(-gripRate * dt));
+    }
     // 喷气状态机
     if (drive.stateMs > 0) {
       drive.stateMs -= dt * 1000;
@@ -925,7 +1134,10 @@ renderer.setAnimationLoop(() => { try {
     const steerTarget = left ? 1 : right ? -1 : 0;
   drive.steer += (steerTarget - drive.steer) * Math.min(1, 8 * dt);
   const driftingNow = drive.drift.phase !== 'none';
-  if (drive.model === 'official' && !driftingNow) {
+  if (drive.newphys) {
+    // 新矢量模型: 转向已在矢量分支(自行车模型/漂移横摆); 侧滑超阈值补轮胎印
+    if (Math.abs(drive.slipVl || 0) > 3 && Math.abs(drive.speed) > 4) dropSkid();
+  } else if (drive.model === 'official' && !driftingNow) {
     // 官方自行车模型(漂移中由漂移横摆接管): 转向角 = steer*10deg*exp(-|v|/22.25)
     const maxRad = 10 * Math.PI / 180;
     const angle = drive.steer * maxRad * Math.exp(-Math.abs(drive.speed) / OFFICIAL.steerConstraint);
@@ -938,9 +1150,14 @@ renderer.setAnimationLoop(() => { try {
   }
   // 车移动(数据空间 z-up -> 用一个地面 Group 载具: kart 已在 zup_root 下, 直接动 kartRoot)
   if (kartRoot && Math.abs(drive.speed) > 0.02) {
-    // 移动沿速度方向(漂移时与车头分离 = 侧滑), 车体朝向 = heading
-    kartRoot.position.x += Math.sin(drive.velDir) * drive.speed * dt;
-    kartRoot.position.z += Math.cos(drive.velDir) * drive.speed * dt;
+    if (drive.newphys) {
+      kartRoot.position.x += drive.vx * dt;           // 新模型: 沿世界速度向量
+      kartRoot.position.z += drive.vz * dt;
+    } else {
+      // 移动沿速度方向(漂移时与车头分离 = 侧滑), 车体朝向 = heading
+      kartRoot.position.x += Math.sin(drive.velDir) * drive.speed * dt;
+      kartRoot.position.z += Math.cos(drive.velDir) * drive.speed * dt;
+    }
     kartRoot.rotation.y = drive.heading;
   }
   // 碰撞检测(障碍柱, 距离 <1.1)
@@ -949,7 +1166,7 @@ renderer.setAnimationLoop(() => { try {
     const dz = kartRoot.position.z - ob.position.z;
     if (dx * dx + dz * dz < 1.2 && Math.abs(drive.speed) > 2) {
       drive.crashUntil = drive.time + 0.5;                      // f47 强碰撞 0.5s
-      drive.speed = -drive.speed * 0.3;
+      bounceVel(-0.3);
       kartRoot.position.x += dx * 0.3; kartRoot.position.z += dz * 0.3;
     }
   }
@@ -974,7 +1191,7 @@ renderer.setAnimationLoop(() => { try {
       const dNow = rd.dist, dPrev = Math.abs(drive.prevLat);
       if (Number.isFinite(dPrev) && (dNow > 10.4) !== (dPrev > 10.4)) {
         p.x = drive.prevX; p.z = drive.prevZ;
-        drive.speed *= -0.3;
+        bounceVel(-0.3);
         snapped = true;
         if (Math.abs(drive.speed) > 2 && performance.now() - SFX.lastCrash > 2000) {
           SFX.lastCrash = performance.now();
@@ -999,7 +1216,7 @@ renderer.setAnimationLoop(() => { try {
         else { const fr = FR[drive.routeHint >= 0 ? drive.routeHint : 0], rr2 = latRight(fr.f);
                ux = rr2[0]; uz = rr2[1]; }
         p.x = c.x + ux * rr; p.z = c.z + uz * rr;
-        drive.speed *= -0.3;
+        bounceVel(-0.3);
       }
     }
   }
@@ -1061,12 +1278,18 @@ renderer.setAnimationLoop(() => { try {
     }
     window.__setCharAnim(st, true, once);
   }
-  // 火焰随喷火
+  // 火焰随喷火: 三层锥长度抖动+横向摆动(官方 boosterWave 的火舌摆动近似), 排气粒子常开
   const firing = drive.boost;
   flames.forEach((f, i) => {
     f.visible = firing;
-    if (firing) f.scale.setScalar(0.8 + 0.4 * Math.sin(drive.time * 30 + i));
+    if (firing) {
+      const len = f.userData.baseLen * (0.82 + 0.3 * Math.abs(Math.sin(drive.time * 23 + i * 1.7))
+                                          + 0.12 * Math.sin(drive.time * 47 + i));
+      f.scale.set(1 + 0.15 * Math.sin(drive.time * 31 + i * 2.3), len / f.userData.baseLen, 1);
+      f.position.z = f.userData.portZ + 0.05 * Math.sin(drive.time * 19 + i);   // 数据空间 z = 世界横向, 火舌摆动
+    }
   });
+  updateExhaust(dt);
   if (parts.balloon && kartRoot) {
     balloonT += dt;
     // 官方 balloon_ani(cycleMode=0 单次): 0..1.4s 缓升 0.375->0.481,
