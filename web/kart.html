@@ -57,10 +57,8 @@
   #boostGauge.full .fullov { display: block; }
   #tachoHint { position: fixed; right: 18px; bottom: 175px; color: #9ab; font: 11px monospace;
                text-shadow: 0 0 4px #000; }
-  #ui { position: fixed; left: 12px; top: 12px; width: 340px; color: #fff;
-        font: 13px/1.9 monospace; text-shadow: 0 1px 2px #000; user-select: none; }
-  #ui label { display: inline-block; margin-right: 6px; }
-  #ui input[type=range] { width: 110px; }
+  #ui { position: fixed; left: 12px; top: 12px; color: #fff; font: 13px/1.7 monospace;
+        text-shadow: 0 1px 2px #000; user-select: none; }
   input { vertical-align: middle; }
   label { margin-right: 10px; }
 </style>
@@ -88,7 +86,6 @@
   </div>
   <div id="itemSlot"><i class="icon"></i></div>
   <div id="boostGauge"><i class="fill"></i><i class="marker"></i><i class="fullov"></i></div>
-  <div id="driftDbg" style="position:fixed; left:12px; bottom:14px; color:#8f8; font:12px monospace; text-shadow:0 0 4px #000; white-space:pre; user-select:none; pointer-events:none;"></div>
   <div id="tachoHint">tacho: cotton 官方皮肤 1:1(表盘 0-375km/h) · Shift 漂移集气 · Ctrl 大喷 · 尾窗内松油再踩=连喷</div>
   <div>转向 <input id="steer" type="range" min="-1" max="1" step="0.01" value="0">
        <span id="steerV">0.00</span>
@@ -110,7 +107,7 @@
       <option value="v2">新漂移2(按住减速+弱小喷)</option>
       <option value="v3">模式3(越按越灵敏)</option>
     </select></label>
-    <label>SHIFT衰减 <input id="shiftDecay" type="range" min="0" max="0.40" step="0.01" value="0.08">
+    <label>SHIFT衰减 <input id="shiftDecay" type="range" min="0" max="0.20" step="0.01" value="0.08">
       <span id="shiftDecayV">0.08</span></label>
     <label>改出阈值 <input id="exitThresh" type="range" min="0.05" max="0.5" step="0.01" value="0.20">
       <span id="exitThreshV">0.20</span></label>
@@ -713,7 +710,6 @@ function saveCfg() {
       steerSens: drive.steerSens,
       miniBoost: drive.miniBoost,
       shiftDecay: drive.shiftDecay,
-      exitThresh: drive.exitThresh,
       toggles: CFG_TOGGLE_IDS.map(id => document.getElementById(id).checked),
     }));
   } catch (e) { /* 存储不可用则忽略 */ }
@@ -732,8 +728,7 @@ function loadCfg() {
     document.getElementById('driftMode').value = c.driftMode;
   }
   const sliders = [['driftSens', 'driftSens', c.driftSens], ['steerSens', 'steerSens', c.steerSens],
-                   ['miniBoost', 'miniBoost', c.miniBoost], ['shiftDecay', 'shiftDecay', c.shiftDecay],
-                   ['exitThresh', 'exitThresh', c.exitThresh]];
+                   ['miniBoost', 'miniBoost', c.miniBoost], ['shiftDecay', 'shiftDecay', c.shiftDecay]];
   for (const [id, prop, val] of sliders) {
     if (typeof val !== 'number' || !Number.isFinite(val)) continue;
     drive[prop] = val;
@@ -1173,11 +1168,9 @@ renderer.setAnimationLoop(() => { try {
       if (drive.speed > 0.5) a -= OFFICIAL.gripBrake / OFFICIAL.mass;   // 行进中按↓ = 刹车
       else a -= OFFICIAL.backwardAccel / OFFICIAL.mass;                  // 倒车推力
     }
-    // 阻力: 二次(决定极速) + 线性; 漂移期豁免 —— 漂移掉速完全由 SHIFT衰减滑块决定
-    // (滑块=0 时漂移纯滑不降速; 非漂移滑行仍受阻力)
-    if (!drifting)
-      a -= drive.speed * Math.abs(drive.speed) * OFFICIAL.dragFactor / OFFICIAL.mass
-         + drive.speed * OFFICIAL.airFriction / OFFICIAL.mass;
+    // 阻力: 二次(决定极速) + 线性
+    a -= drive.speed * Math.abs(drive.speed) * OFFICIAL.dragFactor / OFFICIAL.mass
+       + drive.speed * OFFICIAL.airFriction / OFFICIAL.mass;
     drive.speed += a * dt;
     if (!up && !down && Math.abs(drive.speed) < 0.15) drive.speed = 0;
     drive.speed = Math.max(drive.speed, -12);   // 倒车保守限幅(官方倒车极速无独立数据)
@@ -1202,7 +1195,7 @@ renderer.setAnimationLoop(() => { try {
     drive.prevShift = driftKey;
     if (shiftEdge && D.phase === 'none' && left !== right) {
       D.phase = 'trigger'; D.dir = left ? 1 : -1; D.timer = 0.2;
-      D.elapsed = 0; D.pending = 0; D.hadSlip = false; D.shiftN = 0; D.dirN = 0; D.sensBonus = 0;
+      D.elapsed = 0; D.pending = 0; D.hadSlip = false;
       // 触发甩头: 新矢量模型不给瞬时踢角(会在高速下瞬间产生 ~20m/s 侧向速度=必然撞墙),
       // 甩头由下方 trigger 阶段的渐进横摆(0.2s 内 ~0.24rad)完成, 侧滑随抓地滞后自然建立
       drive.heading += D.dir * 0.28;   // 轻微甩头起漂(无此则点按无感)
@@ -1265,14 +1258,13 @@ renderer.setAnimationLoop(() => { try {
     if (drifting) {
       // 横摆: 漂移灵敏度滑块 × 模式3按住时长增益(按得越久越灵敏: ×(1+1.5×hold), 上限×3)
       const hold = D.phase === 'active' || D.phase === 'decay' ? D.elapsed : 0;
-      const sensBase = drive.driftSens * (1 + (D.sensBonus || 0));   // 滑块值 × Shift加成
       const sens = drive.driftMode === 'v3'
-        ? sensBase * Math.min(3, 1 + 1.5 * hold)
-        : sensBase;
-      const steerMod = (1 + drive.steer * D.dir * 1.5) * sens;
+        ? drive.driftSens * Math.min(3, 1 + 1.5 * hold)
+        : drive.driftSens;
+      const steerMod = (1 + drive.steer * D.dir * 1.5) * sens * (1 + 0.15 * (D.pumps || 0));
       // base 阶梯值平滑逼近(松油门/阶段切换时灵敏度不再突变)
       const baseTgt = D.phase === 'trigger' ? 1.2
-                    : D.phase === 'active' ? 0.55 : 0.1;   // decay 滑行: 横摆减弱到平衡滑角0.11(<改出阈值), 滑角必然缓慢收敛可改出
+                    : D.phase === 'active' ? 0.55 : 0.1;   // decay 横摆降低: 平衡滑角0.11 < 改出阈值, 必然可改出
       if (D.baseSm === undefined) D.baseSm = baseTgt;
       D.baseSm += (baseTgt - D.baseSm) * Math.min(1, 8 * dt);
       // 速度因子加 0.35 下限: 低速仍有基本横摆响应(此前低于15m/s 线性直落=灵敏度断崖)
@@ -1289,7 +1281,7 @@ renderer.setAnimationLoop(() => { try {
       // 速度衰减 = SHIFT衰减滑块 × 双胎迹收敛因子(用户机制):
       // 两后轮印越平行衰减越小(平行滑), 越靠近/收敛衰减越大(急漂磨速)
       let decay = drive.driftMode === 'v2'
-        ? Math.min(0.45, drive.shiftDecay + 0.08 * hold)
+        ? Math.min(0.25, drive.shiftDecay + 0.08 * hold)
         : drive.shiftDecay;
       if (kartRoot) {
         const fx2 = Math.sin(drive.heading), fz2 = Math.cos(drive.heading);
@@ -1309,25 +1301,17 @@ renderer.setAnimationLoop(() => { try {
         }
         drive.prevWL = { lx, lz, rx: rxp, rz: rzp };
       }
-      // N2O(大喷/小喷)抵消一部分 shift 速度衰减(x0.4) —— 氮气推力顶住侧滑磨速
-      if (drive.state !== 0) decay *= 0.4;
       drive.speed -= Math.sign(drive.speed) * Math.abs(drive.speed) * decay * dt;
       // decay 跟随 0.9/s(漂移中1.8): 滑角缓慢衰减,
-      // 滑行时长 ≈ (松Shift时滑角 - 改出阈值) / 0.9 —— 阈值越小滑行越久。
-      // Shift 加成不作用于此处(不贴弧线), 而是直接放大转弯角速度(上方 steerMod)
+      // 滑行时长 ≈ (松Shift时滑角 - 改出阈值) / 0.9 —— 阈值越小滑行越久
+      const follow = D.phase === 'decay' ? 0.9 : 1.8;
       drive.velDir = angleLerp(drive.velDir, drive.heading, 1 - Math.exp(-follow * dt));
     }
     if (drifting) {
-      // 加成双计数器(用户机制×3): 加成同时取决于 Shift 按键数量与同方向键点按数量
-      //   Shift 按下沿(漂移中) → shiftN+1; 同方向键按下沿 → dirN+1
-      //   加成 = min(+120%, 30%×shiftN + 15%×dirN)
-      //   改方向(反打 steer·dir<-0.1)清零; 漂移结束清零
-      if (shiftEdge) D.shiftN = Math.min(4, D.shiftN + 1);
-      const dirKey = D.dir === 1 ? left : right;
-      if (dirKey && !drive.prevDirKey) D.dirN = Math.min(6, D.dirN + 1);
-      drive.prevDirKey = dirKey;
-      D.sensBonus = Math.min(1.2, 0.3 * D.shiftN + 0.15 * D.dirN);
-      if (drive.steer * D.dir < -0.1) { D.shiftN = 0; D.dirN = 0; D.sensBonus = 0; }
+      // 二次 Shift(用户机制): 漂移中同方向再点 = 隐约调整漂移灵敏度(+15%/层, 最多4层);
+      // 反方向再点 = 已有快拉(叠加反向横摆快速改出)
+      if (shiftEdge && D.phase === 'active' && drive.steer * D.dir > 0.1)
+        D.pumps = Math.min(4, (D.pumps || 0) + 1);
       // 滑角过零 = 反拉到位, 漂移消失(commit 集气 + 开小喷尾窗)。
       // hadSlip 锁存: 必须先真正甩出滑角(>0.12rad)才允许反拉结束,
       // 否则上次反拉残留的负滑角会让新漂移刚建立就被误判结束(集气 0 元凶)
@@ -1340,7 +1324,6 @@ renderer.setAnimationLoop(() => { try {
       const pulling = drive.steer * D.dir > 0.3;
       if (D.phase !== 'trigger' && drive.speed > 3 && D.hadSlip && slip < exit && !pulling) {
         D.phase = 'none';
-        D.sensBonus = 0;   // 改出清零灵敏度加成
         drive.gauge = Math.min(OFFICIAL.driftMaxGauge, drive.gauge + D.pending);
         D.pending = 0;
         drive.tailMs = 500;
@@ -1396,10 +1379,7 @@ renderer.setAnimationLoop(() => { try {
       // 子步化(官方 L23845 dt<=0.002s; 此处 4ms 已稳定)
       const n = Math.max(1, Math.ceil(dt / 0.004)), h = dt / n;
       for (let k = 0; k < n; k++) {
-        // 转向有效灵敏度 = 转向滑块 × (1+Shift加成) × (1+0.25×同方向键按住量)
-        const d = drive.steer * drive.steerSens * (1 + (drive.drift.sensBonus || 0))
-                * (1 + 0.25 * Math.abs(drive.steer))
-                * (OFFICIAL.maxSteerDeg * Math.PI / 180)
+        const d = drive.steer * drive.steerSens * (OFFICIAL.maxSteerDeg * Math.PI / 180)
                 * Math.exp(-v / OFFICIAL.steerConstraint) * Math.sign(drive.speed);
         const vr = Math.sin(drive.heading - drive.velDir);
         const wT = drive.yawRate * OFFICIAL.halfWheelbase / v;
@@ -1640,20 +1620,6 @@ renderer.setAnimationLoop(() => { try {
   }
   controls.update();
   updateTacho();
-  { // 左下角: Shift计数/加成/有效灵敏度 实时打印
-    const D = drive.drift;
-    const shiftN = D.shiftN || 0, dirN = D.dirN || 0;
-    const eff = drive.driftSens * (1 + (D.sensBonus || 0))
-      * (drive.driftMode === 'v3' ? Math.min(3, 1 + 1.5 * (D.phase === 'active' || D.phase === 'decay' ? D.elapsed : 0)) : 1);
-    const el = document.getElementById('driftDbg');
-    if (el) el.textContent =
-      `Shift点数: ${shiftN}  同向键点数: ${dirN}
-加成: +${Math.round((D.sensBonus || 0) * 100)}%
-` +
-      `有效漂移灵敏度: ${eff.toFixed(2)} (滑块${drive.driftSens.toFixed(2)})
-漂移状态: ${D.phase} 滑角: ` +
-      `${kartRoot ? ((drive.heading - drive.velDir) * 57.3).toFixed(0) : 0}°`;
-  }
   sfxEngine(drive.speed);
   renderer.render(scene, camera);
   } catch (e) { window.__loopErr = e.message; }
