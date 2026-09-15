@@ -283,7 +283,16 @@ const lambert = c => new THREE.MeshLambertMaterial({ color: c });
 // ---- 真实地图: 城镇高速公路官方路线(tools/export_route.py 从 track.1s 导出) ----
 // route.json: 官方 ToRoad frames, D->P 换算, 10u 重采样, 378 帧环形, 圈长 3780
 // 高程压缩 0.25(官方 27~82 爬坡, 压到 0~14; 路肩做成随路堤岸)
-const ROUTE = await (await fetch('track/route.json')).json();
+// 演示部署(无官方资源)时优雅降级: route.json 拉不到则进入提示模式
+let ROUTE;
+try {
+  ROUTE = await (await fetch('track/route.json')).json();
+} catch (e) {
+  document.getElementById('info').textContent =
+    '此为代码演示版(GitHub Pages), 未包含官方资源——模型/赛道/音效不可用。请自行提取资源后本地运行。';
+  document.getElementById('minimapCoord').textContent = '无资源';
+  throw e;   // 停止后续初始化(HUD 布局与提示可见)
+}
 {
   let yMin = Infinity;
   for (const f of ROUTE.frames) yMin = Math.min(yMin, f.p[1]);
