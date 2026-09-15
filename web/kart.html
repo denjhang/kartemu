@@ -57,8 +57,10 @@
   #boostGauge.full .fullov { display: block; }
   #tachoHint { position: fixed; right: 18px; bottom: 175px; color: #9ab; font: 11px monospace;
                text-shadow: 0 0 4px #000; }
-  #ui { position: fixed; left: 12px; top: 12px; color: #fff; font: 13px/1.7 monospace;
-        text-shadow: 0 1px 2px #000; user-select: none; }
+  #ui { position: fixed; left: 12px; top: 12px; width: 340px; color: #fff;
+        font: 13px/1.9 monospace; text-shadow: 0 1px 2px #000; user-select: none; }
+  #ui label { display: inline-block; margin-right: 6px; }
+  #ui input[type=range] { width: 110px; }
   input { vertical-align: middle; }
   label { margin-right: 10px; }
 </style>
@@ -108,7 +110,7 @@
       <option value="v2">新漂移2(按住减速+弱小喷)</option>
       <option value="v3">模式3(越按越灵敏)</option>
     </select></label>
-    <label>SHIFT衰减 <input id="shiftDecay" type="range" min="0" max="0.20" step="0.01" value="0.08">
+    <label>SHIFT衰减 <input id="shiftDecay" type="range" min="0" max="0.40" step="0.01" value="0.08">
       <span id="shiftDecayV">0.08</span></label>
     <label>改出阈值 <input id="exitThresh" type="range" min="0.05" max="0.5" step="0.01" value="0.20">
       <span id="exitThreshV">0.20</span></label>
@@ -1285,7 +1287,7 @@ renderer.setAnimationLoop(() => { try {
       // 速度衰减 = SHIFT衰减滑块 × 双胎迹收敛因子(用户机制):
       // 两后轮印越平行衰减越小(平行滑), 越靠近/收敛衰减越大(急漂磨速)
       let decay = drive.driftMode === 'v2'
-        ? Math.min(0.25, drive.shiftDecay + 0.08 * hold)
+        ? Math.min(0.45, drive.shiftDecay + 0.08 * hold)
         : drive.shiftDecay;
       if (kartRoot) {
         const fx2 = Math.sin(drive.heading), fz2 = Math.cos(drive.heading);
