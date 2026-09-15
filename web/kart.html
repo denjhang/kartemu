@@ -1173,9 +1173,11 @@ renderer.setAnimationLoop(() => { try {
       if (drive.speed > 0.5) a -= OFFICIAL.gripBrake / OFFICIAL.mass;   // 行进中按↓ = 刹车
       else a -= OFFICIAL.backwardAccel / OFFICIAL.mass;                  // 倒车推力
     }
-    // 阻力: 二次(决定极速) + 线性
-    a -= drive.speed * Math.abs(drive.speed) * OFFICIAL.dragFactor / OFFICIAL.mass
-       + drive.speed * OFFICIAL.airFriction / OFFICIAL.mass;
+    // 阻力: 二次(决定极速) + 线性; 漂移期豁免 —— 漂移掉速完全由 SHIFT衰减滑块决定
+    // (滑块=0 时漂移纯滑不降速; 非漂移滑行仍受阻力)
+    if (!drifting)
+      a -= drive.speed * Math.abs(drive.speed) * OFFICIAL.dragFactor / OFFICIAL.mass
+         + drive.speed * OFFICIAL.airFriction / OFFICIAL.mass;
     drive.speed += a * dt;
     if (!up && !down && Math.abs(drive.speed) < 0.15) drive.speed = 0;
     drive.speed = Math.max(drive.speed, -12);   // 倒车保守限幅(官方倒车极速无独立数据)
