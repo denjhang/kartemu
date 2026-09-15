@@ -1208,7 +1208,8 @@ renderer.setAnimationLoop(() => { try {
     // handleDrivingCommand(L23579): 仅要求 driftDecay<=0, 无速度门槛/不要求油门。
     const shiftEdge = driftKey && !drive.prevShift;
     drive.prevShift = driftKey;
-    if (shiftEdge && D.phase === 'none' && left !== right) {
+    // 起漂最低车速门槛(用户判定: 低速无法漂移)
+    if (shiftEdge && D.phase === 'none' && left !== right && drive.speed > 8) {
       D.phase = 'trigger'; D.dir = left ? 1 : -1; D.timer = 0.2;
       D.elapsed = 0; D.pending = 0; D.hadSlip = false; D.shiftN = 0; D.dirN = 0; D.oppN = 0; D.sensBonus = 0;
       // 触发甩头: 新矢量模型不给瞬时踢角(会在高速下瞬间产生 ~20m/s 侧向速度=必然撞墙),
@@ -1355,8 +1356,12 @@ renderer.setAnimationLoop(() => { try {
       if (slip > 0.12) D.hadSlip = true;
       // 改出阈值(滑块可调): 滑角回落到阈值以下即改出 ——
       // 阈值小 = 滑角要收得几乎归零才结束(难改出, 漂移黏); 阈值大 = 滑角稍降就结束(易改出)。
-      // 正拉(同方向维持, steer·dir>0.3) = 延续漂移状态不改出; 反拉 = 加速滑角收缩改出
-      const exit = drive.exitThresh ?? 0.20;
+      // 正拉(同方向维持, steer·dir>0.3) = 延续漂移状态不改出; 反拉 = 加速滑角收缩改出。
+      // 改出加成: 小喷/大喷中阈值×2(喷气顶开滑角); 速度越慢阈值越大(低速必改出)
+      const vNow = Math.abs(drive.speed);
+      const exit = (drive.exitThresh ?? 0.20)
+        * (drive.state !== 0 ? 2 : 1)
+        * (1 + 1.5 * Math.max(0, 1 - vNow / 20));
       const pulling = drive.steer * D.dir > 0.3;
       if (D.phase !== 'trigger' && drive.speed > 3 && D.hadSlip && slip < exit && !pulling) {
         D.phase = 'none';
