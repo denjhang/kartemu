@@ -1313,8 +1313,8 @@ renderer.setAnimationLoop(() => { try {
       if (drive.state !== 0) decay *= 0.4;
       drive.speed -= Math.sign(drive.speed) * Math.abs(drive.speed) * decay * dt;
       // decay 跟随 0.9/s(漂移中1.8): 滑角缓慢衰减,
-      // 滑行时长 ≈ (松Shift时滑角 - 改出阈值) / 0.9 —— 阈值越小滑行越久。
-      // Shift 加成不作用于此处(不贴弧线), 而是直接放大转弯角速度(上方 steerMod)
+      // 滑行时长 ≈ (松Shift时滑角 - 改出阈值) / 0.9 —— 阈值越小滑行越久
+      const follow = D.phase === 'decay' ? 0.9 : 1.8;
       drive.velDir = angleLerp(drive.velDir, drive.heading, 1 - Math.exp(-follow * dt));
     }
     if (drifting) {
@@ -1392,10 +1392,7 @@ renderer.setAnimationLoop(() => { try {
       // 子步化(官方 L23845 dt<=0.002s; 此处 4ms 已稳定)
       const n = Math.max(1, Math.ceil(dt / 0.004)), h = dt / n;
       for (let k = 0; k < n; k++) {
-        // 转向有效灵敏度 = 转向滑块 × (1+Shift加成) × (1+0.25×同方向键按住量)
-        const d = drive.steer * drive.steerSens * (1 + (drive.drift.sensBonus || 0))
-                * (1 + 0.25 * Math.abs(drive.steer))
-                * (OFFICIAL.maxSteerDeg * Math.PI / 180)
+        const d = drive.steer * drive.steerSens * (OFFICIAL.maxSteerDeg * Math.PI / 180)
                 * Math.exp(-v / OFFICIAL.steerConstraint) * Math.sign(drive.speed);
         const vr = Math.sin(drive.heading - drive.velDir);
         const wT = drive.yawRate * OFFICIAL.halfWheelbase / v;
