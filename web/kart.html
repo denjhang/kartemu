@@ -1254,7 +1254,7 @@ renderer.setAnimationLoop(() => { try {
     // 起漂最低车速门槛(用户判定: 低速无法漂移)
     if (shiftEdge && D.phase === 'none' && left !== right && drive.speed > 8) {
       D.phase = 'trigger'; D.dir = left ? 1 : -1; D.timer = 0.2;
-      D.elapsed = 0; D.pending = 0; D.hadSlip = false; D.shiftN = 0; D.dirN = 0; D.oppN = 0; D.sensBonus = 0;
+      D.elapsed = 0; D.pending = 0; D.hadSlip = false; D.shiftN = 0; D.dirN = 0; D.oppN = 0; D.exitStack = 0; D.sensBonus = 0;
       // 触发甩头: 新矢量模型不给瞬时踢角(会在高速下瞬间产生 ~20m/s 侧向速度=必然撞墙),
       // 甩头由下方 trigger 阶段的渐进横摆(0.2s 内 ~0.24rad)完成, 侧滑随抓地滞后自然建立
       drive.heading += D.dir * 0.28;   // 轻微甩头起漂(无此则点按无感)
@@ -1449,8 +1449,14 @@ renderer.setAnimationLoop(() => { try {
       drive.state = 2;
       drive.stateMs = drive.driftMode === 'v2' ? 350 : 500;
       drive.exitBoostMul = 1.5; drive.exitBoostUntil = drive.time + 0.4;   // 小喷点燃瞬间: 改出x1.5窗口
-      drive.tailMs = 0;
+      drive.tailMs = 250;   // 尾窗续期: 快速连点小喷可叠加
       sfxPlay('boosterDrift', { volume: 0.9 });
+      // 快速小喷叠加改出: 漂移/滑行中每次小喷给一段改出冲量 —— 提速 + 行进方向快速拉正
+      if (drifting) {
+        drive.exitStack = Math.min(3, (drive.exitStack || 0) + 1);
+        drive.speed += 1.2 * drive.exitStack;
+        drive.velDir = angleLerp(drive.velDir, drive.heading, 0.25 + 0.15 * drive.exitStack);
+      }
     }
     drive.tailMs = Math.max(0, drive.tailMs - dt * 1000);
   }
