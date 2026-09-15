@@ -1313,8 +1313,8 @@ renderer.setAnimationLoop(() => { try {
       if (drive.state !== 0) decay *= 0.4;
       drive.speed -= Math.sign(drive.speed) * Math.abs(drive.speed) * decay * dt;
       // decay 跟随 0.9/s(漂移中1.8): 滑角缓慢衰减,
-      // 滑行时长 ≈ (松Shift时滑角 - 改出阈值) / 0.9 —— 阈值越小滑行越久
-      const follow = D.phase === 'decay' ? 0.9 : 1.8;
+      // 滑行时长 ≈ (松Shift时滑角 - 改出阈值) / 0.9 —— 阈值越小滑行越久。
+      // Shift 加成不作用于此处(不贴弧线), 而是直接放大转弯角速度(上方 steerMod)
       drive.velDir = angleLerp(drive.velDir, drive.heading, 1 - Math.exp(-follow * dt));
     }
     if (drifting) {
