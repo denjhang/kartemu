@@ -418,3 +418,8 @@ MeshNormalMaterial 的碰撞测试障碍柱,非故障);index.html 赛道页正�
 - 小喷点燃: 改出阈值×1.5; 大喷点燃: ×2 —— 只在点燃后 0.4s 窗口内有效
   (drive.exitBoostUntil/exitBoostMul), 喷气状态持续期间漂移无改出加成。
 - 取代此前"state!=0 全程×2"的实现。
+
+## 2026-09-15: 漂移抓地力滑块
+- 漂移中 velDir 跟随率 = 漂移抓地力滑块(0.5-3.0, 默认1.8 = 官方 driftSlipFactor 0.2 的部分抓地);
+  decay 滑行期 ×0.5。滑块大 = 漂移黏/弧线紧, 小 = 冰面滑。
+- 已并入配置持久化(kartemu_cfg_v1)。
