@@ -1202,7 +1202,7 @@ renderer.setAnimationLoop(() => { try {
     drive.prevShift = driftKey;
     if (shiftEdge && D.phase === 'none' && left !== right) {
       D.phase = 'trigger'; D.dir = left ? 1 : -1; D.timer = 0.2;
-      D.elapsed = 0; D.pending = 0; D.hadSlip = false; D.sensBonus = 0;
+      D.elapsed = 0; D.pending = 0; D.hadSlip = false; D.shiftN = 0; D.dirN = 0; D.sensBonus = 0;
       // 触发甩头: 新矢量模型不给瞬时踢角(会在高速下瞬间产生 ~20m/s 侧向速度=必然撞墙),
       // 甩头由下方 trigger 阶段的渐进横摆(0.2s 内 ~0.24rad)完成, 侧滑随抓地滞后自然建立
       drive.heading += D.dir * 0.28;   // 轻微甩头起漂(无此则点按无感)
@@ -1318,12 +1318,16 @@ renderer.setAnimationLoop(() => { try {
       drive.velDir = angleLerp(drive.velDir, drive.heading, 1 - Math.exp(-follow * dt));
     }
     if (drifting) {
-      // 二次 Shift(用户机制): 漂移中同方向再点 = 隐约调整漂移灵敏度(+15%/层, 最多4层);
-      // 反方向再点 = 已有快拉(叠加反向横摆快速改出)
-      if (shiftEdge && (D.phase === 'active' || D.phase === 'decay') && drive.steer * D.dir > 0.1)
-        D.sensBonus = Math.min(1.2, (D.sensBonus || 0) + 0.3);   // 每次同向点Shift: 灵敏度+30%
-        // (二次点按必然落在 decay 相位——松 Shift 即入 decay)
-      if (drive.steer * D.dir < -0.1) D.sensBonus = 0;           // 改方向清零加成
+      // 加成双计数器(用户机制×3): 加成同时取决于 Shift 按键数量与同方向键点按数量
+      //   Shift 按下沿(漂移中) → shiftN+1; 同方向键按下沿 → dirN+1
+      //   加成 = min(+120%, 30%×shiftN + 15%×dirN)
+      //   改方向(反打 steer·dir<-0.1)清零; 漂移结束清零
+      if (shiftEdge) D.shiftN = Math.min(4, D.shiftN + 1);
+      const dirKey = D.dir === 1 ? left : right;
+      if (dirKey && !drive.prevDirKey) D.dirN = Math.min(6, D.dirN + 1);
+      drive.prevDirKey = dirKey;
+      D.sensBonus = Math.min(1.2, 0.3 * D.shiftN + 0.15 * D.dirN);
+      if (drive.steer * D.dir < -0.1) { D.shiftN = 0; D.dirN = 0; D.sensBonus = 0; }
       // 滑角过零 = 反拉到位, 漂移消失(commit 集气 + 开小喷尾窗)。
       // hadSlip 锁存: 必须先真正甩出滑角(>0.12rad)才允许反拉结束,
       // 否则上次反拉残留的负滑角会让新漂移刚建立就被误判结束(集气 0 元凶)
@@ -1638,12 +1642,12 @@ renderer.setAnimationLoop(() => { try {
   updateTacho();
   { // 左下角: Shift计数/加成/有效灵敏度 实时打印
     const D = drive.drift;
-    const presses = Math.round((D.sensBonus || 0) / 0.3);
+    const shiftN = D.shiftN || 0, dirN = D.dirN || 0;
     const eff = drive.driftSens * (1 + (D.sensBonus || 0))
       * (drive.driftMode === 'v3' ? Math.min(3, 1 + 1.5 * (D.phase === 'active' || D.phase === 'decay' ? D.elapsed : 0)) : 1);
     const el = document.getElementById('driftDbg');
     if (el) el.textContent =
-      `Shift加成点数: ${presses}
+      `Shift点数: ${shiftN}  同向键点数: ${dirN}
 加成: +${Math.round((D.sensBonus || 0) * 100)}%
 ` +
       `有效漂移灵敏度: ${eff.toFixed(2)} (滑块${drive.driftSens.toFixed(2)})
