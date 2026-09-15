@@ -88,6 +88,8 @@
   </div>
   <div id="itemSlot"><i class="icon"></i></div>
   <div id="boostGauge"><i class="fill"></i><i class="marker"></i><i class="fullov"></i></div>
+  <canvas id="minimap" width="220" height="150" style="position:fixed; right:12px; top:12px; background:rgba(10,14,20,.55); user-select:none; pointer-events:none;"></canvas>
+  <div id="minimapCoord" style="position:fixed; right:12px; top:166px; width:220px; text-align:right; color:#cde; font:11px monospace; text-shadow:0 0 4px #000; user-select:none; pointer-events:none;">坐标加载中…</div>
   <div id="driftDbg" style="position:fixed; left:12px; bottom:14px; color:#8f8; font:12px monospace; text-shadow:0 0 4px #000; white-space:pre; user-select:none; pointer-events:none;"></div>
   <div id="tachoHint">tacho: cotton 官方皮肤 1:1(表盘 0-375km/h) · Shift 漂移集气 · Ctrl 大喷 · 尾窗内松油再踩=连喷</div>
   <div>转向 <input id="steer" type="range" min="-1" max="1" step="0.01" value="0">
@@ -285,6 +287,47 @@ const ROUTE = await (await fetch('track/route.json')).json();
   for (const f of ROUTE.frames) f.p[1] = (f.p[1] - yMin) * 0.25;
 }
 const FR = ROUTE.frames;
+// ---- 小地图(右侧): 官方布局, 赛道中心线 + 自车位置; 图下方显示坐标(报错用) ----
+const mmCanvas = document.getElementById('minimap');
+const mmCtx = mmCanvas.getContext('2d');
+const mmCoord = document.getElementById('minimapCoord');
+let mmPath = null, mmScale = 1, mmOX = 0, mmOZ = 0;
+{
+  let xMin = Infinity, xMax = -Infinity, zMin = Infinity, zMax = -Infinity;
+  for (const f of FR) {
+    xMin = Math.min(xMin, f.p[0]); xMax = Math.max(xMax, f.p[0]);
+    zMin = Math.min(zMin, f.p[2]); zMax = Math.max(zMax, f.p[2]);
+  }
+  const pad = 14;
+  mmScale = Math.min((mmCanvas.width - pad * 2) / (xMax - xMin),
+                     (mmCanvas.height - pad * 2) / (zMax - zMin));
+  mmOX = (mmCanvas.width - (xMax - xMin) * mmScale) / 2 - xMin * mmScale;
+  mmOZ = (mmCanvas.height - (zMax - zMin) * mmScale) / 2 - zMin * mmScale;
+  mmPath = new Path2D();
+  FR.forEach((f, i) => {
+    const x = f.p[0] * mmScale + mmOX, z = f.p[2] * mmScale + mmOZ;
+    i === 0 ? mmPath.moveTo(x, z) : mmPath.lineTo(x, z);
+  });
+  mmPath.closePath();
+}
+function drawMinimap() {
+  if (!kartRoot) return;
+  mmCtx.clearRect(0, 0, mmCanvas.width, mmCanvas.height);
+  mmCtx.lineJoin = 'round'; mmCtx.lineCap = 'round';
+  mmCtx.strokeStyle = '#15181d';
+  mmCtx.lineWidth = Math.max(4, 40 * mmScale);   // 路宽 40m
+  mmCtx.stroke(mmPath);
+  mmCtx.strokeStyle = '#3a3f44'; mmCtx.lineWidth = 1;
+  mmCtx.stroke(mmPath);
+  const s0 = FR[0].p;                            // 起点标记
+  mmCtx.fillStyle = '#fff';
+  mmCtx.fillRect(s0[0] * mmScale + mmOX - 3, s0[2] * mmScale + mmOZ - 1.5, 6, 3);
+  const px = kartRoot.position.x * mmScale + mmOX, pz = kartRoot.position.z * mmScale + mmOZ;
+  mmCtx.fillStyle = '#ff4040';
+  mmCtx.beginPath(); mmCtx.arc(px, pz, 4, 0, Math.PI * 2); mmCtx.fill();
+  mmCtx.strokeStyle = '#fff'; mmCtx.lineWidth = 1; mmCtx.stroke();
+  mmCoord.textContent = `X: ${kartRoot.position.x.toFixed(0)}  Z: ${kartRoot.position.z.toFixed(0)}  Y: ${kartRoot.position.y.toFixed(1)}`;
+}
 const ROAD_HALF = 20;                 // 路宽 40(用户要求加宽一倍), 半宽 20
 // 路肩高程: |lat|<=10 为路面; 10~100 线性回落到草地
 function shoulderK(lat) {
@@ -1664,6 +1707,7 @@ renderer.setAnimationLoop(() => { try {
   }
   controls.update();
   updateTacho();
+  drawMinimap();
   { // 左下角: Shift计数/加成/有效灵敏度 实时打印
     const D = drive.drift;
     const shiftN = D.shiftN || 0, dirN = D.dirN || 0, oppN = D.oppN || 0;
