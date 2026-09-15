@@ -1314,7 +1314,8 @@ renderer.setAnimationLoop(() => { try {
       drive.speed -= Math.sign(drive.speed) * Math.abs(drive.speed) * decay * dt;
       // decay 跟随 0.9/s(漂移中1.8): 滑角缓慢衰减,
       // 滑行时长 ≈ (松Shift时滑角 - 改出阈值) / 0.9 —— 阈值越小滑行越久
-      const follow = D.phase === 'decay' ? 0.9 : 1.8;
+      // 跟随率随加成提升: 路径转弯角速度真变大(不只是车头甩), 加成可感知的核心
+      const follow = (D.phase === 'decay' ? 0.9 : 1.8) * (1 + (D.sensBonus || 0) * 0.6);
       drive.velDir = angleLerp(drive.velDir, drive.heading, 1 - Math.exp(-follow * dt));
     }
     if (drifting) {
