@@ -89,7 +89,8 @@
   <div id="itemSlot"><i class="icon"></i></div>
   <div id="boostGauge"><i class="fill"></i><i class="marker"></i><i class="fullov"></i></div>
   <canvas id="minimap" width="220" height="150" style="position:fixed; right:12px; top:12px; background:rgba(10,14,20,.55); user-select:none; pointer-events:none;"></canvas>
-  <div id="minimapCoord" style="position:fixed; right:12px; top:166px; width:220px; text-align:right; color:#cde; font:11px monospace; text-shadow:0 0 4px #000; user-select:none; pointer-events:none;">坐标加载中…</div>
+  <div id="minimapCoord" style="position:fixed; right:12px; top:166px; width:220px; text-align:right; color:#cde; font:11px monospace; text-shadow:0 0 4px #000; user-select:none; pointer-events:auto; cursor:text;" title="双击输入坐标瞬移">坐标加载中…</div>
+  <input id="minimapInput" style="position:fixed; right:12px; top:164px; width:220px; display:none; color:#fff; background:#1a2230; border:1px solid #4a5a7a; font:12px monospace; text-align:right;" placeholder="X, Z">
   <div id="driftDbg" style="position:fixed; left:12px; bottom:14px; color:#8f8; font:12px monospace; text-shadow:0 0 4px #000; white-space:pre; user-select:none; pointer-events:none;"></div>
   <div id="tachoHint">tacho: cotton 官方皮肤 1:1(表盘 0-375km/h) · Shift 漂移集气 · Ctrl 大喷 · 尾窗内松油再踩=连喷</div>
   <div>转向 <input id="steer" type="range" min="-1" max="1" step="0.01" value="0">
@@ -312,22 +313,60 @@ let mmPath = null, mmScale = 1, mmOX = 0, mmOZ = 0;
   });
   mmPath.closePath();
 }
+// 双击坐标行: 输入 X, Z 瞬间移动(回车确认, 失焦取消)
+mmCoord.addEventListener('dblclick', () => {
+  if (!kartRoot) return;
+  mmCoord.style.display = 'none';
+  mmInput.style.display = 'block';
+  mmInput.value = `${kartRoot.position.x.toFixed(0)}, ${kartRoot.position.z.toFixed(0)}`;
+  mmInput.focus(); mmInput.select();
+});
+function mmTeleportCommit() {
+  if (mmInput.style.display !== 'none' && kartRoot) {
+    const v = mmInput.value.split(/[,,\s]+/).map(Number).filter(n => Number.isFinite(n));
+    if (v.length >= 2) {
+      kartRoot.position.x = v[0];
+      kartRoot.position.z = v[1];
+      drive.routeHint = -1;                    // 重新全局搜索最近路段
+      drive.prevX = v[0]; drive.prevZ = v[1];  // 防传送后误判围栏跨越
+      drive.velDir = drive.heading;
+    }
+  }
+  mmInput.style.display = 'none';
+  mmCoord.style.display = 'block';
+}
+mmInput.addEventListener('keydown', e => {
+  if (e.key === 'Enter') mmTeleportCommit();
+  if (e.key === 'Escape') { mmInput.style.display = 'none'; mmCoord.style.display = 'block'; }
+});
+mmInput.addEventListener('blur', mmTeleportCommit);
+
 function drawMinimap() {
   if (!kartRoot) return;
+  // 原版样式: 深底 + 灰色赛道(宽带浅灰+深灰描边) + 三角形标明车头方向
   mmCtx.clearRect(0, 0, mmCanvas.width, mmCanvas.height);
   mmCtx.lineJoin = 'round'; mmCtx.lineCap = 'round';
-  mmCtx.strokeStyle = '#15181d';
-  mmCtx.lineWidth = Math.max(4, 40 * mmScale);   // 路宽 40m
+  mmCtx.strokeStyle = '#9aa0a6';                       // 灰色赛道路面
+  mmCtx.lineWidth = Math.max(5, 40 * mmScale);
   mmCtx.stroke(mmPath);
-  mmCtx.strokeStyle = '#3a3f44'; mmCtx.lineWidth = 1;
+  mmCtx.strokeStyle = '#4a4f55';                       // 赛道描边
+  mmCtx.lineWidth = 1.5;
   mmCtx.stroke(mmPath);
-  const s0 = FR[0].p;                            // 起点标记
-  mmCtx.fillStyle = '#fff';
+  const s0 = FR[0].p;                                  // 起点标记
+  mmCtx.fillStyle = '#e8e8e8';
   mmCtx.fillRect(s0[0] * mmScale + mmOX - 3, s0[2] * mmScale + mmOZ - 1.5, 6, 3);
+  // 自车: 三角形指向车头方向(原版样式)
   const px = kartRoot.position.x * mmScale + mmOX, pz = kartRoot.position.z * mmScale + mmOZ;
-  mmCtx.fillStyle = '#ff4040';
-  mmCtx.beginPath(); mmCtx.arc(px, pz, 4, 0, Math.PI * 2); mmCtx.fill();
-  mmCtx.strokeStyle = '#fff'; mmCtx.lineWidth = 1; mmCtx.stroke();
+  const h = drive.heading;
+  mmCtx.save();
+  mmCtx.translate(px, pz);
+  mmCtx.rotate(Math.PI - h);                           // 车头向量(sin,cos) -> 画布三角朝向
+  mmCtx.fillStyle = '#ffd200';
+  mmCtx.beginPath();
+  mmCtx.moveTo(0, -6); mmCtx.lineTo(4.5, 5); mmCtx.lineTo(-4.5, 5);
+  mmCtx.closePath(); mmCtx.fill();
+  mmCtx.strokeStyle = '#20242c'; mmCtx.lineWidth = 1; mmCtx.stroke();
+  mmCtx.restore();
   mmCoord.textContent = `X: ${kartRoot.position.x.toFixed(0)}  Z: ${kartRoot.position.z.toFixed(0)}  Y: ${kartRoot.position.y.toFixed(1)}`;
 }
 const ROAD_HALF = 20;                 // 路宽 40(用户要求加宽一倍), 半宽 20
