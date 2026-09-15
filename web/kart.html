@@ -1392,7 +1392,9 @@ renderer.setAnimationLoop(() => { try {
       // 子步化(官方 L23845 dt<=0.002s; 此处 4ms 已稳定)
       const n = Math.max(1, Math.ceil(dt / 0.004)), h = dt / n;
       for (let k = 0; k < n; k++) {
+        // 转向有效灵敏度 = 转向滑块 × (1+Shift加成) × (1+0.25×同方向键按住量)
         const d = drive.steer * drive.steerSens * (1 + (drive.drift.sensBonus || 0))
+                * (1 + 0.25 * Math.abs(drive.steer))
                 * (OFFICIAL.maxSteerDeg * Math.PI / 180)
                 * Math.exp(-v / OFFICIAL.steerConstraint) * Math.sign(drive.speed);
         const vr = Math.sin(drive.heading - drive.velDir);
