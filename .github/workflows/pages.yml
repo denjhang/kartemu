@@ -17,7 +17,7 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - uses: actions/checkout@v4
-      - run: mkdir -p site && cp web/kart.html site/index.html
+      - run: mkdir -p site && cp -r web/. site/
       - uses: actions/upload-pages-artifact@v3
         with:
           path: site
