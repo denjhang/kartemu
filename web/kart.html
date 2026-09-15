@@ -1286,6 +1286,10 @@ renderer.setAnimationLoop(() => { try {
              * (0.35 + 0.65 * Math.min(1, Math.abs(drive.speed) / 15));
       }
       drive.heading += yaw * dt;
+      // 加成直接扭车头(用户判定加成不足): 满加成(+120%) = 额外 +1.2rad/s 的强力扭角,
+      // 点一次 +0.3rad/s —— 车身角度随点按次数明显偏离, 轮胎印快速收敛
+      drive.heading += D.dir * (D.sensBonus || 0) * 1.2
+                     * Math.min(1, Math.abs(drive.speed) / 15) * dt;
       // 速度衰减 = SHIFT衰减滑块 × 双胎迹收敛因子(用户机制):
       // 两后轮印越平行衰减越小(平行滑), 越靠近/收敛衰减越大(急漂磨速)
       let decay = drive.driftMode === 'v2'
