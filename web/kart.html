@@ -1465,11 +1465,14 @@ renderer.setAnimationLoop(() => { try {
       drive.tailMs = 250;   // 尾窗续期: 快速连点小喷可叠加
       sfxPlay('boosterDrift', { volume: 0.9 });
       // 快速小喷叠加改出: 漂移/滑行中每次小喷给一段改出冲量 —— 提速 + 行进方向快速拉正
-      if (drifting) {
-        // 小喷叠加: 第1次无加成, 之后每层 +小喷改出系数/3(滑块, 默认2.4 → 每层0.8), 上限3层
-        drive.speed += drive.miniExit / 3 * (drive.exitStack || 0);
-        drive.velDir = angleLerp(drive.velDir, drive.heading, 0.25 + 0.15 * (drive.exitStack || 0));
+      // 快速小喷叠加改出: 提速 + 拉正 全部由 小喷改出系数滑块 缩放;
+      // 滑块=0 时整个功能关闭(纯小喷, 无突兀的改出拽拉)
+      if (drifting && drive.miniExit > 0) {
         drive.exitStack = Math.min(3, (drive.exitStack || 0) + 1);
+        const exitScale = drive.miniExit / 2.4;   // 相对默认值的缩放
+        drive.speed += drive.miniExit / 3 * (drive.exitStack || 0);
+        drive.velDir = angleLerp(drive.velDir, drive.heading,
+          Math.min(0.7, (0.15 + 0.12 * drive.exitStack) * exitScale));
       }
     }
     drive.tailMs = Math.max(0, drive.tailMs - dt * 1000);
