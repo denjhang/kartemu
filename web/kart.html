@@ -1392,7 +1392,8 @@ renderer.setAnimationLoop(() => { try {
       // 子步化(官方 L23845 dt<=0.002s; 此处 4ms 已稳定)
       const n = Math.max(1, Math.ceil(dt / 0.004)), h = dt / n;
       for (let k = 0; k < n; k++) {
-        const d = drive.steer * drive.steerSens * (OFFICIAL.maxSteerDeg * Math.PI / 180)
+        const d = drive.steer * drive.steerSens * (1 + (drive.drift.sensBonus || 0))
+                * (OFFICIAL.maxSteerDeg * Math.PI / 180)
                 * Math.exp(-v / OFFICIAL.steerConstraint) * Math.sign(drive.speed);
         const vr = Math.sin(drive.heading - drive.velDir);
         const wT = drive.yawRate * OFFICIAL.halfWheelbase / v;
