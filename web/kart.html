@@ -114,7 +114,7 @@
     </select></label>
     <label>SHIFT衰减 <input id="shiftDecay" type="range" min="0" max="0.40" step="0.01" value="0.08">
       <span id="shiftDecayV">0.08</span></label>
-    <label>漂移抓地力 <input id="driftGrip" type="range" min="0.5" max="3" step="0.1" value="1.8">
+    <label>漂移向心力 <input id="driftGrip" type="range" min="0.5" max="3" step="0.1" value="1.8">
       <span id="driftGripV">1.8</span></label>
     <label>改出阈值 <input id="exitThresh" type="range" min="0.05" max="0.5" step="0.01" value="0.20">
       <span id="exitThreshV">0.20</span></label>
@@ -1375,7 +1375,8 @@ renderer.setAnimationLoop(() => { try {
       // N2O(大喷/小喷)抵消一部分 shift 速度衰减(x0.4) —— 氮气推力顶住侧滑磨速
       if (drive.state !== 0) decay *= 0.4;
       drive.speed -= Math.sign(drive.speed) * Math.abs(drive.speed) * decay * dt;
-      // 漂移跟随率 = 漂移抓地力滑块(默认1.8/s, 即官方 driftSlipFactor 0.2 的部分抓地);
+      // 漂移向心力滑块 = 侧向(向心)加速度大小: 拉动行进方向绕漂移弧线转弯的力;
+      // 默认1.8/s(官方 driftSlipFactor 0.2 部分抓地), 大=弯紧, 小=滑开
       // decay 滑行期减半(0.9): 滑角缓慢衰减, 滑行时长 ≈ (滑角-改出阈值)/跟随率
       const follow = (D.phase === 'decay' ? 0.5 : 1) * drive.driftGrip;
       drive.velDir = angleLerp(drive.velDir, drive.heading, 1 - Math.exp(-follow * dt));
