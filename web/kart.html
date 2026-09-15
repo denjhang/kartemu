@@ -367,6 +367,14 @@ function routeDist(x, z, hint) {
   }
   return { dist: best, i: bi, t: bt };
 }
+// 点到指定路段线段的垂直距离(与 routeDist 同几何) —— 用于前后帧一致测量
+function distToSeg(x, z, j) {
+  const a = FR[j].p, b = FR[(j + 1) % FR.length].p;
+  const abx = b[0] - a[0], abz = b[2] - a[2];
+  const denom = abx * abx + abz * abz || 1;
+  const t = Math.max(0, Math.min(1, ((x - a[0]) * abx + (z - a[2]) * abz) / denom));
+  return Math.hypot(x - (a[0] + abx * t), z - (a[2] + abz * t));
+}
 // 最近帧(局部提示搜索; 连续移动只需窗口内查, 丢失才全局)
 function routeNearest(x, z, hint) {
   let best = -1, bd = Infinity;
@@ -1466,7 +1474,9 @@ renderer.setAnimationLoop(() => { try {
     drive.routeHint = rd.i;
     let snapped = false;
     if (drive.airY < 0.9) {
-      const dNow = rd.dist, dPrev = Math.abs(drive.prevLat);
+      // 前后帧都对"当前最近路段"测量 —— 此前 dPrev 用旧参照, 弯道/近路段区域参照跳变
+      // 会产生假穿越 => 路中凭空弹墙(空气墙)
+      const dNow = rd.dist, dPrev = distToSeg(drive.prevX, drive.prevZ, rd.i);
       if (Number.isFinite(dPrev) && (dNow > ROAD_HALF + 0.4) !== (dPrev > ROAD_HALF + 0.4)) {
         p.x = drive.prevX; p.z = drive.prevZ;
         bounceVel(-0.3);
