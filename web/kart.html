@@ -1453,9 +1453,10 @@ renderer.setAnimationLoop(() => { try {
       sfxPlay('boosterDrift', { volume: 0.9 });
       // 快速小喷叠加改出: 漂移/滑行中每次小喷给一段改出冲量 —— 提速 + 行进方向快速拉正
       if (drifting) {
+        // 第一次小喷无加成; 第二次起每次 +1.2m/s×层数(幅度温和), 上限3层
+        drive.speed += 1.2 * (drive.exitStack || 0);
+        drive.velDir = angleLerp(drive.velDir, drive.heading, 0.25 + 0.15 * (drive.exitStack || 0));
         drive.exitStack = Math.min(3, (drive.exitStack || 0) + 1);
-        drive.speed += 1.2 * drive.exitStack;
-        drive.velDir = angleLerp(drive.velDir, drive.heading, 0.25 + 0.15 * drive.exitStack);
       }
     }
     drive.tailMs = Math.max(0, drive.tailMs - dt * 1000);
